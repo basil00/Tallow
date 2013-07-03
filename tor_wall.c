@@ -393,7 +393,8 @@ static void dns_handle_query(HANDLE handle, PDIVERT_ADDRESS addr,
     r_dnsa->class  = htons(0x0001);         // (IN)
     r_dnsa->ttl    = htonl(3600);
     r_dnsa->length = htons(4);
-   
+
+    // Generate a dummy IP address 3.x.x.x 
     uint32_t res = 0x03000000 | ((uint32_t)rand() << 8) | ((uint32_t)rand());
     uint32_t *r_dnsa_res = (uint32_t *)(r_dnsa + 1);
     *r_dnsa_res = htonl(res);
