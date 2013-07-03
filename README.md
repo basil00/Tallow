@@ -27,16 +27,34 @@ when it is running.  Furthermore, TorWall poisons DNS traffic with fake
 responses to prevent leaks whilst still maintaining transparency for the
 browser.
 
+Limitations
+===========
+
+Currently HTTPS (port 443) is not supported.  This is because Privoxy cannot
+intercept such traffic.
+
+Support for HTTPS in "passthru" mode may be added later.
+
 Building
 ========
 
-To build TorWall you need:
-* [WinDivert-1.0.5-MINGW](http://reqrypt.org/windivert.html).
-* [Privoxy.exe](http://www.privoxy.org/) (extract from installation package).
-* [Tor.exe](https://www.torproject.org/) (extract from installation package).
-* MinGW w64 cross-compiler for Linux.
+To build TorWall you need MinGW w64 cross-compiler for Linux.
 
-TODO
+You also need to download and place the following external dependencies and
+place them in the contrib/ directory:
+
+* [WinDivert-1.0.5-MINGW.zip](http://reqrypt.org/windivert.html).
+* The following files extracted from the [Privoxy](http://www.privoxy.org/)
+  installation package: 
+   - privoxy.exe
+   - mgwz.dll
+* The following files extracted from the
+  [Tor Browser Bundle](https://www.torproject.org/):
+   - tor.exe
+   - libaey32.dll
+   - sslea32.dll
+
+Then simply run the build.sh script.
 
 Warning
 =======

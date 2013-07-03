@@ -1,0 +1,34 @@
+#############################################################################
+# $Id: match-all.action,v 1.3 2010/03/27 18:48:38 fabiankeil Exp $
+#
+# This file contains the actions that are applied to all requests and
+# may be overruled later on by other actions files. Less experienced
+# users should only edit this file through the actions file editor.
+#
+#############################################################################
+{+change-x-forwarded-for{block} \
+ +client-header-tagger{css-requests} \
+ +client-header-tagger{image-requests} \
+ +crunch-if-none-match \
+ +crunch-incoming-cookies \
+ +crunch-outgoing-cookies \
+ +deanimate-gifs{last} \
+ +fast-redirects{check-decoded-url} \
+ +filter{html-annoyances} \
+ +filter{content-cookies} \
+ +filter{refresh-tags} \
+ +filter{img-reorder} \
+ +filter{banners-by-size} \
+ +filter{banners-by-link} \
+ +filter{webbugs} \
+ +filter{jumping-windows} \
+ +filter{frameset-borders} \
+ +filter{quicktime-kioskmode} \
+ +hide-from-header{block} \
+ +hide-if-modified-since{-60} \
+ +hide-referrer{conditional-block} \
+ +limit-connect{,} \
+ +overwrite-last-modified{randomize} \
+ +set-image-blocker{pattern} \
+}
+/ # Match all URLs

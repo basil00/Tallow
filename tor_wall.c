@@ -26,6 +26,9 @@
 
 #include "divert.h"
 
+#define STR2(s)             #s
+#define STR(s)              STR2(s)
+
 /*
  * Config.
  */
@@ -115,6 +118,7 @@ int main(void)
         FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
     printf("(C) 2013, basil\n");
     printf("\n");
+    printf("NOTE: Press CONTROL-C to exit\n");
     SetConsoleTextAttribute(console, FOREGROUND_RED);
     printf("WARNING");
     SetConsoleTextAttribute(console,
@@ -176,7 +180,16 @@ extern void redirect(void)
             "tcp.SrcPort != 9030))",
         DIVERT_LAYER_NETWORK, -101, 0);
     if (handle == INVALID_HANDLE_VALUE)
-        error("failed to open WinDivert device");
+        error("failed to open the WinDivert device");
+
+    /*
+     * Extra protection against inbound TCP connections using Tor ports:
+     */
+    HANDLE handle_drop = DivertOpen(
+        "inbound and tcp.Syn and tcp.DstPort == " STR(PROXY),
+        DIVERT_LAYER_NETWORK, -30, DIVERT_FLAG_DROP);
+    if (handle_drop == INVALID_HANDLE_VALUE)
+        error("failed to open the WinDivert device");
  
     // Max-out the packet queue:
     if (!DivertSetParam(handle, DIVERT_PARAM_QUEUE_LEN, 8192))

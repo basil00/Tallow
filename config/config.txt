@@ -1,0 +1,24 @@
+confdir .
+logdir .
+actionsfile match-all.action
+actionsfile default.action
+actionsfile user.action
+filterfile default.filter
+filterfile user.filter
+logfile privoxy.log
+listen-address :9049                    # TorWall SET (do not change)
+toggle 1
+enable-remote-toggle  0
+enable-remote-http-toggle  0
+enable-edit-actions 1
+enforce-blocks 0
+buffer-limit 4096
+enable-proxy-authentication-forwarding 0
+forward-socks5 / 127.0.0.1:9050 .       # TorWall SET (do not change)
+forwarded-connect-retries 0
+accept-intercepted-requests 1           # TorWall SET (do not change)
+allow-cgi-request-crunching 0
+split-large-forms 0
+keep-alive-timeout 5
+tolerate-pipelining 1
+socket-timeout 300
