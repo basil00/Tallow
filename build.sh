@@ -84,6 +84,7 @@ cd ..
 
 echo "Building installation package..."
 cd install
+cp ../install.nsi .
 makensis install.nsi
 mv TorWall-install.exe ..
 cd ..
