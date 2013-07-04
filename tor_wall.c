@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <winsock2.h>
 #include <windows.h>
 
 #include "divert.h"
@@ -42,14 +43,23 @@
  */
 #define error(message, ...)                                             \
     do {                                                                \
-        fprintf(stderr, "error: " message " [error=%d]\n",              \
-            ##__VA_ARGS__, GetLastError());                             \
-        exit(EXIT_FAILURE);                                             \
+        SetConsoleTextAttribute(console, FOREGROUND_RED);               \
+        fprintf(stderr, "error");                                       \
+        SetConsoleTextAttribute(console,                                \
+            FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);       \
+        fprintf(stderr, ": " message " [error=%d]\n", ##__VA_ARGS__,    \
+            GetLastError());                                            \
+        cleanup(0);                                                     \
     } while (false)
 #define warning(message, ...)                                           \
     do {                                                                \
-        fprintf(stderr, "warning: " message " [error=%d]\n",            \
-            ##__VA_ARGS__, GetLastError());                             \
+        SetConsoleTextAttribute(console,                                \
+            FOREGROUND_RED | FOREGROUND_GREEN);                         \
+        fprintf(stderr, "warning");                                     \
+        SetConsoleTextAttribute(console,                                \
+            FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);       \
+        fprintf(stderr, ": " message " [error=%d]\n", ##__VA_ARGS__,    \
+            GetLastError());                                            \
     } while (false)
 
 /*
@@ -93,8 +103,9 @@ static void dns_handle_query(HANDLE handle, PDIVERT_ADDRESS addr,
 static void cleanup(int sig);
 
 /*
- * Processes.
+ * Global handles.
  */
+static HANDLE console = INVALID_HANDLE_VALUE;
 static HANDLE privoxy = INVALID_HANDLE_VALUE;
 static HANDLE tor = INVALID_HANDLE_VALUE;
 
@@ -106,7 +117,7 @@ int main(void)
     /*
      * Welcome banner.
      */
-    HANDLE console = GetStdHandle(STD_OUTPUT_HANDLE);
+    console = GetStdHandle(STD_OUTPUT_HANDLE);
     SetConsoleTextAttribute(console, FOREGROUND_GREEN);
     printf(" _                           _ _\n");
     printf("| |_ ___  _ ____      ____ _| | |\n");
@@ -116,9 +127,14 @@ int main(void)
     printf("\n");
     SetConsoleTextAttribute(console,
         FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
-    printf("(C) 2013, basil\n");
-    printf("\n");
-    printf("NOTE: Press CONTROL-C to exit\n");
+    printf("TorWall.exe: Copyright (C) 2013, basil\n");
+    printf("License GPLv3+: GNU GPL version 3 or later "
+        "<http://gnu.org/licenses/gpl.html>.\n");
+    printf("This is free software: you are free to change and redistribute "
+        "it.\n");
+    printf("There is NO WARRANTY, to the extent permitted by law.\n\n");
+    SetConsoleTextAttribute(console, FOREGROUND_RED | FOREGROUND_GREEN);
+    printf(">>> Press CONTROL-C to exit <<<\n\n");
     SetConsoleTextAttribute(console, FOREGROUND_RED);
     printf("WARNING");
     SetConsoleTextAttribute(console,
@@ -140,22 +156,57 @@ int main(void)
     si.wShowWindow = SW_MINIMIZE;
     PROCESS_INFORMATION pi;
 
-    printf("Starting Privoxy...\n");
+    printf("Starting Privoxy...");
     if (!CreateProcess("privoxy.exe", NULL, NULL, NULL, FALSE, 0, NULL,
             NULL, &si, &pi))
         error("failed to start Privoxy");
     privoxy = pi.hProcess;
+    printf("Done.\n");
 
-    printf("Starting Tor...\n");
-    if (!CreateProcess("tor.exe", NULL, NULL, NULL, FALSE, 0, NULL,
+    printf("Starting Tor");
+    HANDLE out, in;
+    SECURITY_ATTRIBUTES attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.nLength = sizeof(SECURITY_ATTRIBUTES);
+    attr.bInheritHandle = TRUE;
+    attr.lpSecurityDescriptor = NULL;
+    if (!CreatePipe(&out, &in, &attr, 0))
+        error("failed to create pipe");
+    if (!SetHandleInformation(out, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT))
+        error("failed to search handle information");
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(STARTUPINFO);
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdOutput = in;
+    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    if (!CreateProcess("tor.exe", NULL, NULL, NULL, TRUE, 0, NULL,
             NULL, &si, &pi))
         error("failed to start Tor");
     tor = pi.hProcess;
 
     /*
+     * Wait for Tor to start:
+     */
+    // Crude but effective:
+    while (TRUE)
+    {
+        char buf[BUFSIZ];
+        DWORD len;
+        if (!ReadFile(out, buf, sizeof(buf)-1, &len, NULL) || len == 0)
+            error("failed to read Tor output");
+        buf[len] = '\0';
+        if (strstr(buf, "Bootstrapped 100%: Done.") != NULL)
+            break;
+        if (strchr(buf, '%') != NULL)
+            putchar('.');
+        
+    }
+    printf("Done.\n");
+
+    /*
      * Re-direct packets:
      */
-    printf("Starting TorWall...\n");
     redirect();
 
     cleanup(0);
@@ -168,6 +219,8 @@ int main(void)
  */
 extern void redirect(void)
 {
+    printf("Starting TorWall...");
+
     /*
      * We only allow some Tor ports (9001 and 9030) and local traffic.
      * Everything else will be blocked or redirected.
@@ -196,7 +249,10 @@ extern void redirect(void)
         error("failed to set packet queue length");
     if (!DivertSetParam(handle, DIVERT_PARAM_QUEUE_TIME, 1024))
         error("failed to set packet queue time");
-  
+ 
+    printf("Done.\n");
+    printf("TorWall is now running.\n");
+ 
     // Create worker threads:
     for (size_t i = 0; i < NUM_THREADS-1; i++)
     {
@@ -235,7 +291,7 @@ extern void redirect(void)
  * irrelevant: Privoxy retrieves the domain from the Host header and forwards
  * it (via SOCKSv5 and Tor) to the exit node that does the real DNS lookup.
  * To account for this we intercept DNS queries and send fake replies in
- * the 3.x.x.x (HP) address block.
+ * the 10.x.x.x (local) address block.
  *
  */
 static DWORD redirect_worker(LPVOID arg)
@@ -404,11 +460,11 @@ static void dns_handle_query(HANDLE handle, PDIVERT_ADDRESS addr,
     r_dnsa->name   = htons(0xC00C);
     r_dnsa->type   = htons(0x0001);         // (A)
     r_dnsa->class  = htons(0x0001);         // (IN)
-    r_dnsa->ttl    = htonl(3600);
+    r_dnsa->ttl    = htonl(3);              // 3 seconds
     r_dnsa->length = htons(4);
 
-    // Generate a dummy IP address 3.x.x.x 
-    uint32_t res = 0x03000000 | ((uint32_t)rand() << 8) | ((uint32_t)rand());
+    // Generate a dummy IP address 10.x.x.x
+    uint32_t res = 0x0A000000 | ((uint32_t)rand() << 8) | ((uint32_t)rand());
     uint32_t *r_dnsa_res = (uint32_t *)(r_dnsa + 1);
     *r_dnsa_res = htonl(res);
 
@@ -439,6 +495,7 @@ static void cleanup(int sig)
         TerminateProcess(tor, 0);
 
     printf("Finished!\n");
+    Sleep(1500);
     exit(EXIT_SUCCESS);
 }
 
