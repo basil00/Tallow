@@ -1,11 +1,16 @@
-CC = x86_64-w64-mingw32-gcc
-CFLAGS = --std=c99 -I contrib/WinDivert-1.0.5-MINGW/include/
-CLIBS = -lws2_32 -lkernel32 -L contrib/WinDivert-1.0.5-MINGW/amd64/ -l WinDivert
-OBJS = tor_wall.o
+CC = i686-w64-mingw32-gcc
+WINDRES = i686-w64-mingw32-windres
+CFLAGS = --std=c99 -O2 -I contrib/WinDivert-1.1.5-MINGW/include/ -mwindows \
+    -mthreads -m32 -Wall
+CLIBS = -lws2_32 -lkernel32 -L contrib/WinDivert-1.1.5-MINGW/x86/ \
+    -lWinDivert -lcomctl32 -mwindows
+OBJS = main.o redirect.o domain.o
+PROG = tallow.exe
 
-tor_wall: $(OBJS)
-	$(CC) -s -o tor_wall.exe $(OBJS) $(CLIBS)
+$(PROG): $(OBJS)
+	$(WINDRES) main.rc -O coff -o main.res
+	$(CC) -s -o $(PROG) $(OBJS) main.res $(CLIBS)
 
 clean:
-	rm -rf $(OBJS) tor_wall.exe
+	rm -rf $(OBJS) $(PROG)
 

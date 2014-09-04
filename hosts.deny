@@ -1,0 +1,22 @@
+# This file contains a list of domains that are blocked via Tor.
+# NOTE: These domains are *NOT* blocked when Tor diversion is disabled!
+# The primary motivation for this list is to minimize Tor bandwidth.
+
+# Windows update:
+download.windowsupdate.com
+download.microsoft.com
+update.microsoft.com
+windowsupdate.com
+ntservicepack.microsoft.com
+wustat.windows.com
+
+# Windows "phone-home" related:
+# NOTE: This list is probably not comprehensive.
+spynet2.microsoft.com
+spynettest.microsoft.com
+sqm.microsoft.com
+watson.microsoft.com
+
+# Common ad servers:
+doubleclick.net
+

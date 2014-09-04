@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# (C) 2013, all rights reserved,
+# (C) 2014, all rights reserved,
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,10 +20,8 @@
 
 set -e
 
-WINDIVERT=WinDivert-1.0.5-MINGW
-PRIVOXY=privoxy
+WINDIVERT=WinDivert-1.1.5-MINGW
 TOR=tor
-MGWZ=mgwz
 LIBEAY32=libeay32
 SSLEAY32=ssleay32
 
@@ -35,21 +33,12 @@ then
         "(http://reqrypt.org/windivert.html)" 2>&1
     exit 1
 fi
-for FILE in "$PRIVOXY.exe" "$MGWZ.dll"
-do
-    if [ ! -e "$FILE" ]
-    then
-        echo "ERROR: missing \"$FILE\"; download and extract from the" \
-            "Privoxy Windows installation package (http://www.privoxy.org/)" 2&1
-        exit 1
-    fi
-done
-for FILE in "$TOR.exe" "$LIBEAY32.dll" "$SSLEAY32.dll"
+for FILE in "$TOR.exe" 
 do
     if [ ! -e "$FILE" ]
     then
         echo "ERROR: missing \"$FILE\"; download and extract from the Tor" \
-            "Browser Bundle for Windows (https://www.torproject.org/)" 2>&1
+            "Expert Bundle for Windows (https://www.torproject.org/)" 2>&1
         exit 1;
     fi
 done
@@ -57,36 +46,32 @@ done
 echo "Extracting WinDivert..."
 unzip -o $WINDIVERT.zip
 
-echo "Building TorWall..."
+echo "Building Tallow..."
 cd ..
 make
 
-echo "Copying \"tor_wall.exe\"..."
-cp tor_wall.exe install/.
+echo "Copying \"tallow.exe\"..."
+cp tallow.exe install/.
+echo "Copying \"hosts.deny\"..."
+cp hosts.deny install/.
 
-for FILE in "$PRIVOXY.exe" "$MGWZ.dll" "$TOR.exe" "$LIBEAY32.dll" \
-       "$SSLEAY32.dll" \
-       "$WINDIVERT/amd64/WinDivert.sys" \
-       "$WINDIVERT/amd64/WinDivert.inf" \
-       "$WINDIVERT/amd64/WinDivert.dll" \
-       "$WINDIVERT/amd64/WdfCoInstaller01009.dll"
+for FILE in "$TOR.exe" \
+       "$WINDIVERT/amd64/WinDivert64.sys" \
+       "$WINDIVERT/x86/WinDivert32.sys" \
+       "$WINDIVERT/x86/WinDivert.dll"
 do
     echo "Copying \"$FILE\"..."
     cp contrib/"$FILE" install/.
 done
-cd config
-for FILE in *
-do
-    echo "Copying \"$FILE\"..."
-    cp "$FILE" ../install/.
-done
-cd ..
 
 echo "Building installation package..."
 cd install
+
+zip -r ../TallowBundle-files.zip *
 cp ../install.nsi .
+
 makensis install.nsi
-mv TorWall-install.exe ..
+mv TallowBundle-install.exe ..
 cd ..
 
 echo "Cleaning up..."

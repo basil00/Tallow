@@ -1,5 +1,5 @@
 ; install.nsi
-; (C) 2013, all rights reserved,
+; (C) 2014, all rights reserved,
 ; 
 ; This program is free software: you can redistribute it and/or modify
 ; it under the terms of the GNU General Public License as published by
@@ -18,10 +18,10 @@
 
 SetCompressor /SOLID /FINAL lzma
 
-Name "TorWall"
-OutFile "TorWall-install.exe"
+Name "Tallow"
+OutFile "TallowBundle-install.exe"
 
-InstallDir "$PROGRAMFILES\TorWall\"
+InstallDir "$PROGRAMFILES\Tallow\"
 
 RequestExecutionLevel admin
 
@@ -35,50 +35,33 @@ RequestExecutionLevel admin
 
 Section ""
     SetOutPath $INSTDIR
-    File "tor_wall.exe"
-    File "tor_wall.exe.manifest"
-    File "privoxy.exe"
-    File "mgwz.dll"
+    File "tallow.exe"
     File "tor.exe"
-    File "libeay32.dll"
-    File "ssleay32.dll"
-    File "WinDivert.sys"
-    File "WinDivert.inf"
+    File "WinDivert32.sys"
+    File "WinDivert64.sys"
     File "WinDivert.dll"
-    File "WdfCoInstaller01009.dll"
-    File "config.txt"
-    File "default.action"
-    File "default.filter"
-    File "match-all.action"
-    File "trust.txt"
-    File "user.action"
-    File "user.filter"
-    WriteUninstaller "TorWall-uninstall.exe"
-    CreateShortCut "$DESKTOP\TorWall.lnk" "$INSTDIR\tor_wall.exe" ""
+    File "hosts.deny"
+    WriteUninstaller "TallowBundle-uninstall.exe"
+    WriteRegStr HKLM \
+        "Software\Microsoft\Windows\CurrentVersion\Uninstall\Tallow" \
+        "DisplayName" "TallowBundle"
+    WriteRegStr HKLM \
+        "Software\Microsoft\Windows\CurrentVersion\Uninstall\Tallow" \
+        "UninstallString" "$\"$INSTDIR\TallowBundle-uninstall.exe$\""
+    CreateShortCut "$DESKTOP\Tallow.lnk" "$INSTDIR\tallow.exe" ""
 SectionEnd
 
 Section "Uninstall"
-    Delete "$INSTDIR\tor_wall.exe"
-    Delete "$INSTDIR\tor_wall.exe.manifest"
-    Delete "$INSTDIR\privoxy.exe"
-    Delete "$INSTDIR\mgwz.dll"
+    Delete "$INSTDIR\tallow.exe"
     Delete "$INSTDIR\tor.exe"
-    Delete "$INSTDIR\libeay32.dll"
-    Delete "$INSTDIR\ssleay32.dll"
-    Delete "$INSTDIR\WinDivert.sys"
-    Delete "$INSTDIR\WinDivert.inf"
+    Delete "$INSTDIR\WinDivert32.sys"
+    Delete "$INSTDIR\WinDivert64.sys"
     Delete "$INSTDIR\WinDivert.dll"
-    Delete "$INSTDIR\WdfCoInstaller01009.dll"
-    Delete "$INSTDIR\config.txt"
-    Delete "$INSTDIR\default.action"
-    Delete "$INSTDIR\default.filter"
-    Delete "$INSTDIR\match-all.action"
-    Delete "$INSTDIR\trust.txt"
-    Delete "$INSTDIR\user.action"
-    Delete "$INSTDIR\user.filter"
-    Delete "$INSTDIR\privoxy.log"
-    Delete "$INSTDIR\TorWall-uninstall.exe"
+    Delete "$INSTDIR\hosts.deny"
+    Delete "$INSTDIR\TallowBundle-uninstall.exe"
     RMDir "$INSTDIR\"
-    Delete "$DESKTOP\TorWall.lnk"
+    DeleteRegKey HKLM \
+        "Software\Microsoft\Windows\CurrentVersion\Uninstall\Tallow"
+    Delete "$DESKTOP\Tallow.lnk"
 SectionEnd
 
