@@ -242,12 +242,13 @@ extern void redirect_stop(void)
 
     // Close the WinDivert handle; will cause the workers to exit.
     redirect_on = false;
-    if (!WinDivertClose(handle))
+    if (!WinDivertClose(handle) || !WinDivertClose(handle_drop))
     {
         warning("failed to close WinDivert filter");
         exit(EXIT_FAILURE);
     }
     handle = INVALID_HANDLE_VALUE;
+    handle_drop = INVALID_HANDLE_VALUE;
 
     for (size_t i = 0; i < NUM_WORKERS; i++)
     {
@@ -403,7 +404,7 @@ static void socks4a_connect_1_of_2(struct conn *conn, HANDLE handle,
     PWINDIVERT_ADDRESS addr, PWINDIVERT_IPHDR iphdr, PWINDIVERT_TCPHDR tcphdr)
 {
     uint32_t srcaddr = ntohl(iphdr->SrcAddr), dstaddr = ntohl(iphdr->DstAddr);
-    struct name *name = domain_lookup_name(ntohl(iphdr->DstAddr));
+    struct name *name = domain_lookup_name(dstaddr);
     if (name == NULL && option_force_socks4a)
     {
         debug("Ignoring non-SOCKs4a connect %u.%u.%u.%u:%u ---> "
@@ -414,6 +415,18 @@ static void socks4a_connect_1_of_2(struct conn *conn, HANDLE handle,
             ntohs(conn->port));
 
         // No corresponding name -- ignore
+        return;
+    }
+    if (name == NULL && !is_fake_addr(dstaddr))
+    {
+        debug("Ignoring stale connect %u.%u.%u.%u:%u ---> "
+                "%u.%u.%u.%u:%u\n",
+            ADDR0(srcaddr), ADDR1(srcaddr), ADDR2(srcaddr), ADDR3(srcaddr),
+            ntohs(tcphdr->DstPort),
+            ADDR0(dstaddr), ADDR1(dstaddr), ADDR2(dstaddr), ADDR3(dstaddr),
+            ntohs(conn->port));
+
+        // Address is stale -- ignore
         return;
     }
     

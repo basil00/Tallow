@@ -24,6 +24,11 @@
 #define ADDR_BASE               0x2C000000      // 44.0.0.0/24 (AMPRNet)
 #define ADDR_MAX                0x2CFFFFFF
 
+static inline bool is_fake_addr(uint32_t addr)
+{
+    return addr >= ADDR_BASE && addr <= ADDR_MAX;
+}
+
 struct name
 {
     LONG ref_count;

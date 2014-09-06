@@ -164,7 +164,7 @@ extern uint32_t domain_lookup_addr(const char *name0)
 // Lookup a name based on the address.
 extern struct name *domain_lookup_name(uint32_t addr)
 {
-    if (addr < ADDR_BASE || addr > ADDR_MAX)
+    if (!is_fake_addr(addr))
         return NULL;
     uint8_t msb = (uint8_t)(addr >> 16);
     uint16_t idx = (uint16_t)addr;
