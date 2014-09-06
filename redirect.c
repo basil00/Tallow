@@ -112,6 +112,7 @@ static void socks4a_connect_2_of_2(struct conn *conn, HANDLE handle,
     PWINDIVERT_ADDRESS addr, PWINDIVERT_IPHDR iphdr, PWINDIVERT_TCPHDR tcphdr,
     struct socks4a_rep *sockshdr);
 static void queue_cleanup(uint32_t addr, uint16_t port);
+static void debug_addr(uint32_t addr, uint16_t port);
 
 // State:
 static bool redirect_on = false;
@@ -366,6 +367,21 @@ static void redirect_tcp(HANDLE handle, PWINDIVERT_ADDRESS addr,
                     !tcphdr->Rst)
                 {
                     // SYN
+                    uint16_t dstport = ntohs(tcphdr->DstPort);
+                    if (option_force_web_only &&
+                        dstport != 80 &&            // HTTP
+                        dstport != 443)             // HTTPS
+                    {
+                        uint32_t srcaddr = ntohl(iphdr->SrcAddr);
+                        debug("Ignoring non-web connect %u.%u.%u.%u:%u ---> ",
+                            ADDR0(srcaddr), ADDR1(srcaddr), ADDR2(srcaddr),
+                            ADDR3(srcaddr), ntohs(tcphdr->SrcPort));
+                        debug_addr(ntohl(iphdr->DstAddr), dstport);
+
+                        drop = true;
+                        break;
+                    }
+
                     tcphdr->SeqNum = htonl(ntohl(tcphdr->SeqNum) -
                         sizeof(struct socks4a_req));
                     conn->state = STATE_SYN_SEEN;
@@ -748,17 +764,7 @@ extern void redirect_cleanup(size_t count)
         {
             debug("Cleanup %s connection ",
                 (conn->state == STATE_FIN_SEEN? "closed": "stalled"));
-            struct name *name = domain_lookup_name(q->addr);
-            if (name != NULL)
-            {
-                debug("%s:%u\n", name->name, ntohs(q->port));
-                domain_deref(name);
-            }
-            else
-                debug("%u.%u.%u.%u:%u\n",
-                    ADDR0(q->addr), ADDR1(q->addr), ADDR2(q->addr),
-                    ADDR3(q->addr), ntohs(q->port));
-
+            debug_addr(q->addr, conn->port);
             conn->state = STATE_NOT_CONNECTED;
             conn->port = 0;
         }
@@ -766,5 +772,20 @@ extern void redirect_cleanup(size_t count)
         q = q->next;
         free(q0);
     }
+}
+
+// Debug address:
+static void debug_addr(uint32_t addr, uint16_t port)
+{
+    struct name *name = domain_lookup_name(addr);
+    if (name != NULL)
+    {
+        debug("%s:%u\n", name->name, ntohs(port));
+        domain_deref(name);
+    }
+    else
+        debug("%u.%u.%u.%u:%u\n",
+            ADDR0(addr), ADDR1(addr), ADDR2(addr),
+            ADDR3(addr), ntohs(port));
 }
 

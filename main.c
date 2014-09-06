@@ -40,12 +40,16 @@
     (50 + BUTTON_SIZE_Y + 2 * BUTTON_OFFSET_Y)
 #define TOR_ON_MESSAGE              "Tor divert is ON"
 #define TOR_OFF_MESSAGE             "Tor divert is OFF"
+#define ID_TOR_BUTTON               3100
+#define ID_DIRECT_CHECK             3101
+#define ID_WEB_CHECK                3102
 
 // Prototypes:
 static DWORD WINAPI tor_thread(LPVOID arg);
 static DWORD WINAPI cleanup_thread(DWORD arg);
 
 // The GUI:
+static HWND button = NULL;
 static HWND status_bar = NULL;
 static HWND status_label = NULL;
 
@@ -53,7 +57,8 @@ static HWND status_label = NULL;
 static bool state = false;
 
 // Options:
-bool option_force_socks4a = true;
+bool option_force_web_only = true;
+bool option_force_socks4a  = true;
 
 // Start/stop Tor:
 static void start_tor(void)
@@ -61,6 +66,7 @@ static void start_tor(void)
     state = true;
     redirect_start();
     SetWindowText(status_label, TOR_ON_MESSAGE);
+    status(TOR_ON_MESSAGE);
 }
 
 static void stop_tor(void)
@@ -68,6 +74,7 @@ static void stop_tor(void)
     state = false;
     redirect_stop();
     SetWindowText(status_label, TOR_OFF_MESSAGE);
+    status(TOR_OFF_MESSAGE);
 }
 
 // Tor SOCKS4a config control:
@@ -83,7 +90,17 @@ static LRESULT CALLBACK config_proc(HWND hwnd, UINT msg, WPARAM wparam,
             if (event == BN_CLICKED)
             {
                 LRESULT state = SendMessage((HWND)lparam, BM_GETCHECK, 0, 0);
-                option_force_socks4a = (state == BST_CHECKED);
+                switch (LOWORD(wparam))
+                {
+                    case ID_DIRECT_CHECK:
+                        option_force_socks4a = (state == BST_CHECKED);
+                        break;
+                    case ID_WEB_CHECK:
+                        option_force_web_only = (state == BST_CHECKED);
+                        break;
+                    default:
+                        break;
+                }
             }
             break;
         }
@@ -124,8 +141,6 @@ static LRESULT CALLBACK status_proc(HWND hwnd, UINT msg, WPARAM wparam,
 // Window control:
 LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
-    HWND button = NULL;
-
     switch(msg)
     {
         case WM_CREATE:
@@ -140,14 +155,17 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
                 BS_ICON | BS_AUTOCHECKBOX | BS_PUSHLIKE | WS_CHILD | WS_VISIBLE,
                 BUTTON_OFFSET_X, BUTTON_OFFSET_Y,
                 BUTTON_SIZE_X, BUTTON_SIZE_Y,
-                hwnd, NULL, instance, NULL);
+                hwnd, (HMENU)ID_TOR_BUTTON, instance, NULL);
             if (button == NULL)
                 goto gui_init_failed;
             HICON image = LoadImage(GetModuleHandle(NULL), "TOR_ICON",
                 IMAGE_ICON, 0, 0, LR_DEFAULTCOLOR);
-            if (image != NULL)
-                SendMessage(button, BM_SETIMAGE, (WPARAM)IMAGE_ICON,
-                    (LPARAM)image);
+            if (image == NULL)
+                goto gui_init_failed;
+            SendMessage(button, BM_SETIMAGE, (WPARAM)IMAGE_ICON,
+                (LPARAM)image);
+            EnableWindow(button, FALSE);
+            
 
             // (2) Create the status bar:
             status_bar = CreateWindow(
@@ -163,7 +181,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
             size_t status_size_x = BUTTON_SIZE_X, status_size_y = 45;
             HWND status_box = CreateWindow(
                 "BUTTON", "Status",
-                WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+                WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | BS_GROUPBOX,
                 status_offset_x, status_offset_y,
                 status_size_x, status_size_y, hwnd, NULL, instance, NULL);
             if (status_box == NULL)
@@ -196,25 +214,35 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
             if (config_box == NULL)
                 goto gui_init_failed;
             SendMessage(config_box, WM_SETFONT, (WPARAM)font, 0);
+            config_proc0 = (WNDPROC)SetWindowLongPtr(config_box,
+                GWLP_WNDPROC, (LONG_PTR)config_proc);
+            
+            HWND web_check = CreateWindow(
+                "BUTTON", "Force web-only",
+                BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE,
+                15, 20, config_size_x - 30, 15,
+                config_box, (HMENU)ID_WEB_CHECK, instance, NULL);
+            if (web_check == NULL)
+                goto gui_init_failed;
+            SendMessage(web_check, WM_SETFONT, (WPARAM)font, 0);
+            SendMessage(web_check, BM_SETCHECK, (WPARAM)BST_CHECKED, 0);
 
             HWND direct_check = CreateWindow(
                 "BUTTON", "Force SOCKS4a",
                 BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE,
-                15, 20, config_size_x - 30, 15,
-                config_box, NULL, instance, NULL);
+                15, 40, config_size_x - 30, 15,
+                config_box, (HMENU)ID_DIRECT_CHECK, instance, NULL);
             if (direct_check == NULL)
                 goto gui_init_failed;
             SendMessage(direct_check, WM_SETFONT, (WPARAM)font, 0);
             SendMessage(direct_check, BM_SETCHECK, (WPARAM)BST_CHECKED, 0);
-            config_proc0 = (WNDPROC)SetWindowLongPtr(config_box,
-                GWLP_WNDPROC, (LONG_PTR)config_proc);
-            
+
             break;
         }
         case WM_COMMAND:
         {
             int event = HIWORD(wparam);
-            if (event == BN_CLICKED)
+            if (event == BN_CLICKED && LOWORD(wparam) == ID_TOR_BUTTON)
             {
                 LRESULT state = SendMessage((HWND)lparam, BM_GETCHECK, 0, 0);
                 if (state == BST_CHECKED)
@@ -404,7 +432,17 @@ static DWORD WINAPI tor_thread(LPVOID arg)
             i++;
         if (buf[i] != ']' && buf[i+1] != ' ')
             continue;
-        status("%s", buf+i+2);
+        char *msg = buf+i+2;
+        
+        // Crude-but-effective:
+        if (strstr(msg, "Bootstrapped 100%") != NULL)
+        {
+            EnableWindow(button, TRUE);
+            status("Bootstrapped 100%%: Press the \"Tor\" button to begin");
+            continue;
+        }
+
+        status("%s", msg);
     }
 }
 

@@ -36,6 +36,7 @@ extern void warning(const char *message, ...);
 
 // Options:
 extern bool option_force_socks4a;
+extern bool option_force_web_only;
 
 // Locking functions:
 static inline HANDLE create_lock(void)
