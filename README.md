@@ -27,6 +27,39 @@ you toggle the button.
 To test if Tor redirection is working, please visit the following site:
 [https://check.torproject.org](https://check.torproject.org).
 
+Technical
+=========
+
+Tallow uses [WinDivert](http://reqrypt.org/windivert.html") to intercept
+all traffic to/from your PC.  Tallow handles two main traffic types: DNS
+traffic and TCP streams.
+
+DNS queries are intercepted and handled by Tallow itself.  Instead of finding
+the real IP address of a domain, Tallow generates a pseudo-random "fake"
+domain (in the range 44.0.0.0/24) and uses this address in the query response.
+The fake-IP is also associated with the domain and recorded in a table for
+later reference.  The alternative would be to look up the real IP via the Tor
+(which supports DNS).  However, since Tallow uses SOCKS4a the real IP is not
+necessary.  Handling DNS requests locally is significantly faster.
+
+TCP connections are also intercepted.  Tallow "reflects" outbound TCP connects
+into inbound SOCKS4a connects to the Tor program.  If the connection is to
+a fake-IP, Tallow looks up the corresponding domain and uses this for the
+SOCKS4a connection.  Otherwise the connection is blocked (by default) or a
+SOCKS4 direct connection via Tor is used.  Connecting TCP to SOCKS4(a) is
+possible with a bit of magic (see redirect.c).
+
+All other traffic is simply blocked.  This includes all inbound (non-Tor)
+traffic and outbound traffic that is not TCP nor DNS.  In addition, Tallow
+blocks all domains listed in the hosts.deny file.  This includes domains such
+as Windows update, Windows phone home, and some common ad servers, to help
+prevent Tor bandwidth wastage.  It is possible to edit and customize your
+hosts.deny file as you see fit.
+
+Note that Tallow does not intercept TCP ports 9001 and 9030 that are used by
+Tor.  As a side-effect, Tallow will not work on any other program that uses
+these ports.
+
 History
 =======
 
