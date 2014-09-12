@@ -30,7 +30,17 @@ To test if Tor redirection is working, please visit the following site:
 Technical
 =========
 
-Tallow uses [WinDivert](http://reqrypt.org/windivert.html") to intercept
+Tallow uses the following configuration to connect to the Internet:
+
+    +-----------+        +-----------+        +----------+
+    |    PC     |------->|    TOR    |------->|  SERVER  |
+    |  a.b.c.d  |<-------|  a.b.c.d  |<-------|  x.y.z.w |
+    +-----------+        +-----------+        +----------+
+
+Here (a.b.c.d) represents the local address, and (x.y.z.w) represents a remote
+server.
+
+Tallow uses [WinDivert](http://reqrypt.org/windivert.html) to intercept
 all traffic to/from your PC.  Tallow handles two main traffic types: DNS
 traffic and TCP streams.
 

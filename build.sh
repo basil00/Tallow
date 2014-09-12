@@ -22,8 +22,6 @@ set -e
 
 WINDIVERT=WinDivert-1.1.5-MINGW
 TOR=tor
-LIBEAY32=libeay32
-SSLEAY32=ssleay32
 
 echo "Checking for dependencies..."
 cd contrib
