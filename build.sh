@@ -20,7 +20,7 @@
 
 set -e
 
-WINDIVERT=WinDivert-1.1.5-MINGW
+WINDIVERT=WinDivert-1.1.6-MINGW
 TOR=tor
 VERSION=`cat VERSION`
 
