@@ -20,6 +20,7 @@
 
 IDI_APPLICATION ICON "tallow.ico"
 TOR_ICON ICON "tor.ico"
+TALLOW_ICON_SMALL ICON "tallow_small.ico"
 
 1 RT_MANIFEST "manifest.xml"
 

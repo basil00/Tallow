@@ -293,11 +293,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
     class.cbSize = sizeof(WNDCLASSEX);
     class.lpfnWndProc = window_proc;
     class.hInstance = instance;
-    class.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    class.hIcon = LoadImage(GetModuleHandle(NULL), "TALLOW_ICON_SMALL",
+        IMAGE_ICON, 0, 0, LR_DEFAULTCOLOR);
     class.hCursor = LoadCursor(NULL, IDC_ARROW);
     class.hbrBackground = (HBRUSH)(COLOR_WINDOW);
     class.lpszClassName = PROGNAME "_WINDOW";
-    class.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
 
     if (!RegisterClassEx(&class))
     {
