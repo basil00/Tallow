@@ -47,6 +47,9 @@
 // Prototypes:
 static DWORD WINAPI tor_thread(LPVOID arg);
 static DWORD WINAPI cleanup_thread(DWORD arg);
+static void save_option(const char *option, bool val0);
+static bool restore_option(const char *option);
+
 
 // The GUI:
 static HWND button = NULL;
@@ -57,6 +60,8 @@ static HWND status_label = NULL;
 static bool state = false;
 
 // Options:
+#define OPTION_FORCE_WEB_ONLY       "ForceWebOnly"
+#define OPTION_FORCE_SOCKS4a_ONLY   "ForceSOCKS4aOnly"
 bool option_force_web_only = true;
 bool option_force_socks4a  = true;
 
@@ -94,9 +99,13 @@ static LRESULT CALLBACK config_proc(HWND hwnd, UINT msg, WPARAM wparam,
                 {
                     case ID_DIRECT_CHECK:
                         option_force_socks4a = (state == BST_CHECKED);
+                        save_option(OPTION_FORCE_SOCKS4a_ONLY,
+                            option_force_socks4a);
                         break;
                     case ID_WEB_CHECK:
                         option_force_web_only = (state == BST_CHECKED);
+                        save_option(OPTION_FORCE_WEB_ONLY,
+                            option_force_web_only);
                         break;
                     default:
                         break;
@@ -225,7 +234,8 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
             if (web_check == NULL)
                 goto gui_init_failed;
             SendMessage(web_check, WM_SETFONT, (WPARAM)font, 0);
-            SendMessage(web_check, BM_SETCHECK, (WPARAM)BST_CHECKED, 0);
+            if (option_force_web_only)
+                SendMessage(web_check, BM_SETCHECK, (WPARAM)BST_CHECKED, 0);
 
             HWND direct_check = CreateWindow(
                 "BUTTON", "Force SOCKS4a",
@@ -235,7 +245,8 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
             if (direct_check == NULL)
                 goto gui_init_failed;
             SendMessage(direct_check, WM_SETFONT, (WPARAM)font, 0);
-            SendMessage(direct_check, BM_SETCHECK, (WPARAM)BST_CHECKED, 0);
+            if (option_force_socks4a)
+                SendMessage(direct_check, BM_SETCHECK, (WPARAM)BST_CHECKED, 0);
 
             break;
         }
@@ -287,6 +298,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
     srand(random());
     domain_init();
     redirect_init();
+    option_force_socks4a  = restore_option(OPTION_FORCE_SOCKS4a_ONLY);
+    option_force_web_only = restore_option(OPTION_FORCE_WEB_ONLY);
+
 
     // (1) Register the window class:
     memset(&class, 0, sizeof(class));
@@ -306,7 +320,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
     }
 
     // (2) Create the window:
-    window = CreateWindow(PROGNAME "_WINDOW", PROGNAME,
+    window = CreateWindow(PROGNAME "_WINDOW", PROGNAME " (beta)",
         WS_OVERLAPPEDWINDOW & (~WS_THICKFRAME),
         CW_USEDEFAULT, CW_USEDEFAULT, WINDOW_SIZE_X, WINDOW_SIZE_Y,
         NULL, NULL, instance, NULL);
@@ -545,5 +559,36 @@ warning_failed:
     SetConsoleTextAttribute(console,
         FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
     MessageBox(NULL, buf, PROGNAME " - Warning", MB_ICONWARNING | MB_OK);
+}
+
+// Save/restore config options:
+#define REG_PATH        "SOFTWARE\\" PROGNAME
+static void save_option(const char *option, bool val0)
+{
+    HKEY key;
+    if (RegCreateKeyEx(HKEY_CURRENT_USER, REG_PATH, 0, NULL, 0, KEY_WRITE,
+            NULL, &key, NULL) != ERROR_SUCCESS)
+    {
+        warning("failed to open registry key for option \"%s\"", option);
+        return;
+    }
+    DWORD val = (DWORD)val0;
+    if (RegSetValueEx(key, option, 0, REG_DWORD, (LPBYTE)&val, sizeof(val))
+            != ERROR_SUCCESS)
+        warning("failed to write value to regisyry for option \"%s\"", option);
+    RegCloseKey(key);
+}
+static bool restore_option(const char *option)
+{
+    HKEY key;
+    if (RegOpenKeyEx(HKEY_CURRENT_USER, REG_PATH, 0, KEY_READ, &key)
+            != ERROR_SUCCESS)
+        return true;
+    DWORD type, val, len = sizeof(val);
+    RegQueryValueEx(key, option, NULL, &type, (LPBYTE)&val, &len);
+    RegCloseKey(key);
+    if (type != REG_DWORD)
+        return true;
+    return (bool)val;
 }
 

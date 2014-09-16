@@ -22,6 +22,7 @@ set -e
 
 WINDIVERT=WinDivert-1.1.5-MINGW
 TOR=tor
+VERSION=`cat VERSION`
 
 echo "Checking for dependencies..."
 cd contrib
@@ -65,11 +66,11 @@ done
 echo "Building installation package..."
 cd install
 
-zip -r ../TallowBundle-files.zip *
+zip -r "../TallowBundle-$VERSION-files.zip" *
 cp ../install.nsi .
 
 makensis install.nsi
-mv TallowBundle-install.exe ..
+mv TallowBundle-install.exe "../TallowBundle-$VERSION-install.exe"
 cd ..
 
 echo "Cleaning up..."

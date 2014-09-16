@@ -60,6 +60,7 @@ Section "Uninstall"
     Delete "$INSTDIR\hosts.deny"
     Delete "$INSTDIR\TallowBundle-uninstall.exe"
     RMDir "$INSTDIR\"
+    DeleteRegKey HKCU "Software\Tallow"
     DeleteRegKey HKLM \
         "Software\Microsoft\Windows\CurrentVersion\Uninstall\Tallow"
     Delete "$DESKTOP\Tallow.lnk"
