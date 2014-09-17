@@ -53,6 +53,10 @@ echo "Copying \"tallow.exe\"..."
 cp tallow.exe install/.
 echo "Copying \"hosts.deny\"..."
 cp hosts.deny install/.
+echo "Copying \"traffic.deny\"..."
+cp traffic.deny install/.
+echo "Copying \"LICENSE\"..."
+cp LICENSE install/.
 
 for FILE in "$TOR.exe" \
        "$WINDIVERT/amd64/WinDivert64.sys" \

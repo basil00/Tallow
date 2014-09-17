@@ -29,6 +29,7 @@
 
 #define MAX_PACKET          0xFFFF
 #define NUM_WORKERS         4
+#define MAX_FILTER          (1024-1)
 
 // SOCKS4a headers
 #define SOCKS_USERID_SIZE   (256 + 8)
@@ -111,10 +112,12 @@ static void socks4a_connect_1_of_2(struct conn *conn, HANDLE handle,
 static void socks4a_connect_2_of_2(struct conn *conn, HANDLE handle,
     PWINDIVERT_ADDRESS addr, PWINDIVERT_IPHDR iphdr, PWINDIVERT_TCPHDR tcphdr,
     struct socks4a_rep *sockshdr);
+extern bool filter_read(char *filter, size_t len);
 static void queue_cleanup(uint32_t addr, uint16_t port);
 static void debug_addr(uint32_t addr, uint16_t port);
 
 // State:
+static char filter[MAX_FILTER+1];
 static bool redirect_on = false;
 static HANDLE handle = INVALID_HANDLE_VALUE;
 static HANDLE handle_drop = INVALID_HANDLE_VALUE;
@@ -181,6 +184,21 @@ extern void redirect_init(void)
         warning("failed to open WinDivert filter");
         exit(EXIT_FAILURE);
     }
+
+    // Read the filter:
+    if (!filter_read(filter, sizeof(filter)))
+    {
+        // Use the default filter:
+        const char *default_filter = "ipv6 or (not tcp and udp.DstPort != 53)";
+        size_t len = strlen(default_filter);
+        if (len+1 > sizeof(filter))
+        {
+            warning("failed to create default filter");
+            exit(EXIT_FAILURE);
+        }
+        memcpy(filter, default_filter, len+1);
+    }
+    debug("Filter is \"%s\"\n", filter);
 }
 
 // Start traffic redirect through Tor:
@@ -191,10 +209,9 @@ extern void redirect_start(void)
     if (handle != INVALID_HANDLE_VALUE)
         return;
 
-    // Drop traffic we cannot handle:
-    handle_drop = WinDivertOpen(
-        "ip.DstAddr != 127.0.0.1 and (ipv6 or (not tcp and udp.DstPort != 53))",
-        WINDIVERT_LAYER_NETWORK, -753, WINDIVERT_FLAG_DROP);
+    // Drop traffic from the loaded filter:
+    handle_drop = WinDivertOpen(filter, WINDIVERT_LAYER_NETWORK, -753,
+        WINDIVERT_FLAG_DROP);
     if (handle_drop == INVALID_HANDLE_VALUE)
     {
 redirect_start_error:
@@ -772,6 +789,53 @@ extern void redirect_cleanup(size_t count)
         q = q->next;
         free(q0);
     }
+}
+
+// Read traffic filter.
+extern bool filter_read(char *filter, size_t len)
+{
+    const char *filename = "traffic.deny";
+    FILE *stream = fopen(filename, "r");
+    if (stream == NULL)
+    {
+        warning("failed to read \"%s\" for reading", filename);
+        return false;
+    }
+    
+    int c;
+    size_t i = 0;
+    while (true)
+    {
+        c = getc(stream);
+        switch (c)
+        {
+            case EOF:
+            {
+                if (i >= len)
+                    goto length_error;
+                filter[i++] = '\0';
+                fclose(stream);
+                return true;
+            }
+            case '#':
+                while ((c = getc(stream)) != '\n' && c != EOF)
+                    ;
+                continue;
+            case '\n':
+                continue;
+            default:
+                break;
+        }
+        if (i >= len)
+            goto length_error;
+        filter[i++] = c;
+    }
+
+length_error:
+
+    warning("failed to read \"%s\"; filter length is too long (max=%u)",
+        filename, len);
+    return false;
 }
 
 // Debug address:

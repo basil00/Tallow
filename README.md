@@ -89,7 +89,7 @@ To build Tallow you need the MinGW cross-compiler for Linux.
 You also need to download and place the following external dependencies and
 place them in the contrib/ directory:
 
-* [WinDivert-1.1.5-MINGW.zip](http://reqrypt.org/windivert.html).
+* [WinDivert-1.1.6-MINGW.zip](http://reqrypt.org/windivert.html).
 * The following files extracted from the
   [Tor Expert Bundle](https://www.torproject.org/):
    - tor.exe

@@ -1,0 +1,13 @@
+# This file specifies what traffic is *dropped* when Tor diversion is enabled.
+
+# Notes:
+# - This file uses the WinDivert filter language, see:
+#   (reqrypt.org/windivert-doc.html) for more information.
+# - This is filter in addition to "web-only" mode; the two filters operate
+#   independently.
+# - ipv6 and non-tcp (except port 53 UDP) will be dropped regardless of what
+#   this file specifies.  However, it is more efficient to filter such
+#   traffic here.
+
+ipv6 or (not tcp and udp.DstPort != 53)
+
