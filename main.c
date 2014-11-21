@@ -410,8 +410,11 @@ static DWORD WINAPI tor_thread(LPVOID arg)
     si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_HIDE;
     const char *tor_path = ".\\tor.exe";
+
+    // NOTE: Tor warns about allowing external connections.  However, such
+    //       connections are blocked (see redirect_init).
     if (!CreateProcess(tor_path,
-        "tor.exe --SOCKSListenAddress 0.0.0.0:" STR(TOR_PORT),
+        "tor.exe --SOCKSListenAddress 0.0.0.0:" STR(TOR_PORT) " -f .\\torrc",
         NULL, NULL, TRUE, CREATE_BREAKAWAY_FROM_JOB, NULL, NULL, &si, &pi))
     {
         warning("failed to start Tor");

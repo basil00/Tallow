@@ -27,7 +27,7 @@
 #include "main.h"
 #include "redirect.h"
 
-#define MAX_PACKET          0xFFFF
+#define MAX_PACKET          4096
 #define NUM_WORKERS         4
 #define MAX_FILTER          (1024-1)
 
@@ -170,20 +170,25 @@ static void send_packet(HANDLE handle, void *packet, size_t packet_len,
 // Init this module:
 extern void redirect_init(void)
 {
-    // This does two things:
-    // (1) Stops external connections to Tor; and
-    // (2) Prevents "fake" IPs leaking to the internet (which may indicate the
-    //     use of this program).
+    // Stop external connections to Tor:
     HANDLE handle = WinDivertOpen(
-        "(inbound and tcp.DstPort == " STR(TOR_PORT) ") or "
-        "(outbound and ip.DstAddr >= " STR(ADDR_BASE) " and ip.DstAddr <= "
-            STR(ADDR_MAX) ")",
+        "inbound and tcp.DstPort == " STR(TOR_PORT),
         WINDIVERT_LAYER_NETWORK, -755, WINDIVERT_FLAG_DROP);
     if (handle == INVALID_HANDLE_VALUE)
     {
+redirect_init_error:
         warning("failed to open WinDivert filter");
         exit(EXIT_FAILURE);
     }
+
+    // Prevent "fake" IPs leaking to the internet (which may indicate the use
+    // of this program):
+    handle = WinDivertOpen(
+        "outbound and ip.DstAddr >= " STR(ADDR_BASE) " and ip.DstAddr <= "
+            STR(ADDR_MAX),
+        WINDIVERT_LAYER_NETWORK, 755, WINDIVERT_FLAG_DROP);
+    if (handle == INVALID_HANDLE_VALUE)
+        goto redirect_init_error;
 
     // Read the filter:
     if (!filter_read(filter, sizeof(filter)))

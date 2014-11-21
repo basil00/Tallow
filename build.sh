@@ -20,7 +20,7 @@
 
 set -e
 
-WINDIVERT=WinDivert-1.1.6-MINGW
+WINDIVERT=WinDivert-1.1.7-MINGW
 TOR=tor
 VERSION=`cat VERSION`
 
@@ -55,6 +55,8 @@ echo "Copying \"hosts.deny\"..."
 cp hosts.deny install/.
 echo "Copying \"traffic.deny\"..."
 cp traffic.deny install/.
+echo "Copying \"torrc\"..."
+cp torrc install/.
 echo "Copying \"LICENSE\"..."
 cp LICENSE install/.
 
