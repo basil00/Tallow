@@ -96,6 +96,16 @@ place them in the contrib/ directory:
 
 Then simply run the build.sh script.
 
+TODOS
+=====
+
+* *More comprehensive hosts.deny*:
+  By default Windows will "phone home" on a regular basis for various
+  reasons.  Tallow attempts to block most of this traffic by default
+  via the *hosts.deny* file.  However, it is unclear how
+  comprehensive the current blacklist really is.  Suggestions for new
+  entries are welcome.
+
 Warnings
 ========
 
