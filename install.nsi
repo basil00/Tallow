@@ -1,5 +1,5 @@
 ; install.nsi
-; (C) 2014, all rights reserved,
+; (C) 2015, all rights reserved,
 ; 
 ; This program is free software: you can redistribute it and/or modify
 ; it under the terms of the GNU General Public License as published by
@@ -35,15 +35,32 @@ RequestExecutionLevel admin
 
 Section ""
     SetOutPath $INSTDIR
+
+    ; Tallow files:
     File "tallow.exe"
-    File "tor.exe"
+    File "hosts.deny"
+    File "traffic.deny"
+    File "LICENSE"
+    
+    ; WinDivert files:
     File "WinDivert32.sys"
     File "WinDivert64.sys"
     File "WinDivert.dll"
-    File "hosts.deny"
-    File "traffic.deny"
+
+    ; Tor files:
+    File "libeay32.dll"
+    File "libevent-2-0-5.dll"
+    File "libevent_core-2-0-5.dll"
+    File "libevent_extra-2-0-5.dll"
+    File "libgcc_s_sjlj-1.dll"
+    File "libssp-0.dll"
+    File "ssleay32.dll"
+    File "zlib1.dll"
+    File "tor.exe"
+    File "geoip"
+    File "geoip6"
     File "torrc"
-    File "LICENSE"
+
     WriteUninstaller "TallowBundle-uninstall.exe"
     WriteRegStr HKLM \
         "Software\Microsoft\Windows\CurrentVersion\Uninstall\Tallow" \
@@ -55,17 +72,7 @@ Section ""
 SectionEnd
 
 Section "Uninstall"
-    Delete "$INSTDIR\tallow.exe"
-    Delete "$INSTDIR\tor.exe"
-    Delete "$INSTDIR\WinDivert32.sys"
-    Delete "$INSTDIR\WinDivert64.sys"
-    Delete "$INSTDIR\WinDivert.dll"
-    Delete "$INSTDIR\hosts.deny"
-    Delete "$INSTDIR\traffic.deny"
-    Delete "$INSTDIR\torrc"
-    Delete "$INSTDIR\LICENSE"
-    Delete "$INSTDIR\TallowBundle-uninstall.exe"
-    RMDir "$INSTDIR\"
+    RMDir /R /REBOOTOK "$INSTDIR\"
     DeleteRegKey HKCU "Software\Tallow"
     DeleteRegKey HKLM \
         "Software\Microsoft\Windows\CurrentVersion\Uninstall\Tallow"

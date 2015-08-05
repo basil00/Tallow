@@ -1,6 +1,6 @@
 /*
  * main.c
- * Copyright (C) 2014, basil
+ * Copyright (C) 2015, basil
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -300,7 +300,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
     redirect_init();
     option_force_socks4a  = restore_option(OPTION_FORCE_SOCKS4a_ONLY);
     option_force_web_only = restore_option(OPTION_FORCE_WEB_ONLY);
-
 
     // (1) Register the window class:
     memset(&class, 0, sizeof(class));

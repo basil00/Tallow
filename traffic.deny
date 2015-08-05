@@ -2,12 +2,17 @@
 
 # Notes:
 # - This file uses the WinDivert filter language, see:
-#   (reqrypt.org/windivert-doc.html) for more information.
+#   (https://reqrypt.org/windivert-doc.html) for more information.
 # - This is filter in addition to "web-only" mode; the two filters operate
 #   independently.
 # - ipv6 and non-tcp (except port 53 UDP) will be dropped regardless of what
 #   this file specifies.  However, it is more efficient to filter such
 #   traffic here.
+# - Traffic is dropped if and only if the filter evaluates to "true".
 
-ipv6 or (not tcp and udp.DstPort != 53)
+(ipv6? true: false)                 # IPv6 always dropped.
+    or
+(udp? udp.DstPort != 53: false)     # UDP always dropped except DNS.
+    or
+(not tcp and not udp? true: false)  # non-TCP and non-UDP always dropped.
 

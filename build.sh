@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# (C) 2014, all rights reserved,
+# (C) 2015, all rights reserved,
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,8 +20,8 @@
 
 set -e
 
-WINDIVERT=WinDivert-1.1.7-MINGW
-TOR=tor
+WINDIVERT=WinDivert-1.2.0-rc-MINGW
+TOR=tor-win32-0.2.6.9
 VERSION=`cat VERSION`
 
 echo "Checking for dependencies..."
@@ -32,11 +32,11 @@ then
         "(http://reqrypt.org/windivert.html)" 2>&1
     exit 1
 fi
-for FILE in "$TOR.exe" 
+for FILE in "$TOR.zip" 
 do
     if [ ! -e "$FILE" ]
     then
-        echo "ERROR: missing \"$FILE\"; download and extract from the Tor" \
+        echo "ERROR: missing \"$FILE\"; download the Tor" \
             "Expert Bundle for Windows (https://www.torproject.org/)" 2>&1
         exit 1;
     fi
@@ -44,6 +44,9 @@ done
 
 echo "Extracting WinDivert..."
 unzip -o $WINDIVERT.zip
+
+echo "Extracting Tor..."
+unzip -o $TOR.zip
 
 echo "Building Tallow..."
 cd ..
@@ -60,10 +63,21 @@ cp torrc install/.
 echo "Copying \"LICENSE\"..."
 cp LICENSE install/.
 
-for FILE in "$TOR.exe" \
+for FILE in \
        "$WINDIVERT/amd64/WinDivert64.sys" \
        "$WINDIVERT/x86/WinDivert32.sys" \
-       "$WINDIVERT/x86/WinDivert.dll"
+       "$WINDIVERT/x86/WinDivert.dll" \
+       "Tor/libeay32.dll" \
+       "Tor/libevent-2-0-5.dll" \
+       "Tor/libevent_core-2-0-5.dll" \
+       "Tor/libevent_extra-2-0-5.dll" \
+       "Tor/libgcc_s_sjlj-1.dll" \
+       "Tor/libssp-0.dll" \
+       "Tor/ssleay32.dll" \
+       "Tor/zlib1.dll" \
+       "Tor/tor.exe" \
+       "Data/Tor/geoip" \
+       "Data/Tor/geoip6"
 do
     echo "Copying \"$FILE\"..."
     cp contrib/"$FILE" install/.

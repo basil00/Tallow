@@ -1,6 +1,6 @@
 /*
  * redirect.c
- * Copyright (C) 2014, basil
+ * Copyright (C) 2015, basil
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -230,7 +230,7 @@ redirect_start_error:
             "tcp.SrcPort != 9001 and "
             "tcp.DstPort != 9030 and "
             "tcp.SrcPort != 9030))",
-        WINDIVERT_LAYER_NETWORK, -752, WINDIVERT_FLAG_NO_CHECKSUM);
+        WINDIVERT_LAYER_NETWORK, -752, 0);
     if (handle == INVALID_HANDLE_VALUE)
         goto redirect_start_error;
 
@@ -820,6 +820,16 @@ extern bool filter_read(char *filter, size_t len)
                     goto length_error;
                 filter[i++] = '\0';
                 fclose(stream);
+
+                // Check the filter for errors:
+                const char *err_str;
+                if (!WinDivertHelperCheckFilter(filter,
+                        WINDIVERT_LAYER_NETWORK, &err_str, NULL))
+                {
+                    warning("failed to verify \"%s\"; filter error \"%s\"",
+                        filename, err_str);
+                    return false;
+                }
                 return true;
             }
             case '#':
@@ -838,6 +848,7 @@ extern bool filter_read(char *filter, size_t len)
 
 length_error:
 
+    fclose(stream);
     warning("failed to read \"%s\"; filter length is too long (max=%u)",
         filename, len);
     return false;
