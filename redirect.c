@@ -701,7 +701,7 @@ static void handle_dns(HANDLE handle, PWINDIVERT_ADDRESS addr,
     size_t len = sizeof(struct dnshdr) + data_len + sizeof(struct dnsa);
     if (len > 512)                          // Max DNS packet size.
         return;
-    len += sizeof(WINDIVERT_IPHDR) + sizeof(WINDIVERT_UDPHDR) + len;
+    len += sizeof(WINDIVERT_IPHDR) + sizeof(WINDIVERT_UDPHDR);
 
     char buf[len + 8];                      // 8 bytes extra.
     PWINDIVERT_IPHDR riphdr = (PWINDIVERT_IPHDR)buf;
