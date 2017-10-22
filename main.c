@@ -413,7 +413,7 @@ static DWORD WINAPI tor_thread(LPVOID arg)
     // NOTE: Tor warns about allowing external connections.  However, such
     //       connections are blocked (see redirect_init).
     if (!CreateProcess(tor_path,
-        "tor.exe --SOCKSListenAddress 0.0.0.0:" STR(TOR_PORT) " -f .\\torrc",
+        "tor.exe --SocksPort 0.0.0.0:" STR(TOR_PORT) " -f .\\torrc",
         NULL, NULL, TRUE, CREATE_BREAKAWAY_FROM_JOB, NULL, NULL, &si, &pi))
     {
         warning("failed to start Tor");

@@ -1,5 +1,5 @@
-Tallow (formally TorWall) - Transparent Tor for Windows
-=======================================================
+Tallow - Transparent Tor for Windows
+====================================
 
 Tallow is a small program that redirects all outbound traffic from a Windows
 machine via the Tor anonymity network.  Any traffic that cannot be handled by
@@ -89,8 +89,8 @@ To build Tallow you need the MinGW cross-compiler for Linux.
 You also need to download and place the following external dependencies and
 place them in the contrib/ directory:
 
-* [WinDivert-1.2.0-rc-MINGW.zip](http://reqrypt.org/windivert.html).
-* [tor-win32-0.2.6.9.zip](https://www.torproject.org/).
+* [WinDivert-1.3.0-MINGW.zip](http://reqrypt.org/windivert.html).
+* [tor-win32-0.3.1.7.zip](https://www.torproject.org/).
 
 Then simply run the build.sh script.
 

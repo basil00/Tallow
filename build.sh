@@ -20,8 +20,8 @@
 
 set -e
 
-WINDIVERT=WinDivert-1.2.0-rc-MINGW
-TOR=tor-win32-0.2.6.9
+WINDIVERT=WinDivert-1.3.0-MINGW
+TOR=tor-win32-0.3.1.7
 VERSION=`cat VERSION`
 
 echo "Checking for dependencies..."
