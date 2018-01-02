@@ -90,7 +90,7 @@ You also need to download and place the following external dependencies and
 place them in the contrib/ directory:
 
 * [WinDivert-1.3.0-MINGW.zip](http://reqrypt.org/windivert.html).
-* [tor-win32-0.3.1.7.zip](https://www.torproject.org/).
+* [tor-win32-0.3.1.9.zip](https://www.torproject.org/).
 
 Then simply run the build.sh script.
 

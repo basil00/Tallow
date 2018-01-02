@@ -1,6 +1,6 @@
 /*
  * redirect.c
- * Copyright (C) 2015, basil
+ * Copyright (C) 2018, basil
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -112,7 +112,7 @@ static void socks4a_connect_1_of_2(struct conn *conn, HANDLE handle,
 static void socks4a_connect_2_of_2(struct conn *conn, HANDLE handle,
     PWINDIVERT_ADDRESS addr, PWINDIVERT_IPHDR iphdr, PWINDIVERT_TCPHDR tcphdr,
     struct socks4a_rep *sockshdr);
-extern bool filter_read(char *filter, size_t len);
+extern bool filter_read(const char *filename, char *filter, size_t len);
 static void queue_cleanup(uint32_t addr, uint16_t port);
 static void debug_addr(uint32_t addr, uint16_t port);
 
@@ -191,7 +191,7 @@ redirect_init_error:
         goto redirect_init_error;
 
     // Read the filter:
-    if (!filter_read(filter, sizeof(filter)))
+    if (!filter_read("traffic.deny", filter, sizeof(filter)))
     {
         // Use the default filter:
         const char *default_filter = "ipv6 or (not tcp and udp.DstPort != 53)";
@@ -215,6 +215,7 @@ extern void redirect_start(void)
         return;
 
     // Drop traffic from the loaded filter:
+    debug("Traffic deny filter is \"%s\"\n", filter);
     handle_drop = WinDivertOpen(filter, WINDIVERT_LAYER_NETWORK, -753,
         WINDIVERT_FLAG_DROP);
     if (handle_drop == INVALID_HANDLE_VALUE)
@@ -224,13 +225,26 @@ redirect_start_error:
         exit(EXIT_FAILURE);
     }
 
-    handle = WinDivertOpen(
-        "(ipv6 or ip.DstAddr != 127.0.0.1) and "
-        "(not tcp or (tcp and tcp.DstPort != 9001 and "
-            "tcp.SrcPort != 9001 and "
-            "tcp.DstPort != 9030 and "
-            "tcp.SrcPort != 9030))",
-        WINDIVERT_LAYER_NETWORK, -752, 0);
+    char tor_filter[MAX_FILTER+1];
+    if (!filter_read("traffic.divert", tor_filter, sizeof(tor_filter)-1))
+    {
+        // Use the default filter:
+        const char *default_filter =
+            "(ipv6 or ip.DstAddr != 127.0.0.1) and "
+            "(not tcp or (tcp and tcp.DstPort != 9001 and "
+                "tcp.SrcPort != 9001 and "
+                "tcp.DstPort != 9030 and "
+                "tcp.SrcPort != 9030))";
+        size_t len = strlen(default_filter);
+        if (len+1 > sizeof(tor_filter))
+        {
+            warning("failed to create default filter");
+            exit(EXIT_FAILURE);
+        }
+        memcpy(tor_filter, default_filter, len+1);
+    }
+    debug("Traffic divert filter is \"%s\"\n", tor_filter);
+    handle = WinDivertOpen(tor_filter, WINDIVERT_LAYER_NETWORK, -752, 0);
     if (handle == INVALID_HANDLE_VALUE)
         goto redirect_start_error;
 
@@ -797,18 +811,18 @@ extern void redirect_cleanup(size_t count)
 }
 
 // Read traffic filter.
-extern bool filter_read(char *filter, size_t len)
+extern bool filter_read(const char *filename, char *filter, size_t len)
 {
-    const char *filename = "traffic.deny";
     FILE *stream = fopen(filename, "r");
     if (stream == NULL)
     {
-        warning("failed to read \"%s\" for reading", filename);
+        warning("failed to open \"%s\" for reading", filename);
         return false;
     }
     
     int c;
     size_t i = 0;
+    bool space = false;
     while (true)
     {
         c = getc(stream);
@@ -816,10 +830,10 @@ extern bool filter_read(char *filter, size_t len)
         {
             case EOF:
             {
+                fclose(stream);
                 if (i >= len)
                     goto length_error;
                 filter[i++] = '\0';
-                fclose(stream);
 
                 // Check the filter for errors:
                 const char *err_str;
@@ -833,12 +847,21 @@ extern bool filter_read(char *filter, size_t len)
                 return true;
             }
             case '#':
+                space = true;
                 while ((c = getc(stream)) != '\n' && c != EOF)
                     ;
                 continue;
-            case '\n':
+            case '\n': case '\t': case ' ': case '\r':
+                space = true;
                 continue;
             default:
+                if (space)
+                {
+                    if (i >= len)
+                        goto length_error;
+                    filter[i++] = ' ';
+                }
+                space = false;
                 break;
         }
         if (i >= len)

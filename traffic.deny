@@ -1,5 +1,7 @@
 # This file specifies what traffic is *dropped* when Tor diversion is enabled.
 
+# DO NOT MODIFY THIS FILE UNLESS YOU KNOW WHAT YOU ARE DOING
+
 # Notes:
 # - This file uses the WinDivert filter language, see:
 #   (https://reqrypt.org/windivert-doc.html) for more information.

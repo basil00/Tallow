@@ -21,7 +21,7 @@
 set -e
 
 WINDIVERT=WinDivert-1.3.0-MINGW
-TOR=tor-win32-0.3.1.7
+TOR=tor-win32-0.3.1.9
 VERSION=`cat VERSION`
 
 echo "Checking for dependencies..."
@@ -58,6 +58,8 @@ echo "Copying \"hosts.deny\"..."
 cp hosts.deny install/.
 echo "Copying \"traffic.deny\"..."
 cp traffic.deny install/.
+echo "Copying \"traffic.divert\"..."
+cp traffic.divert install/.
 echo "Copying \"torrc\"..."
 cp torrc install/.
 echo "Copying \"LICENSE\"..."
