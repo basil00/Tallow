@@ -9,7 +9,7 @@
 #   contents of this file.
 # - Traffic is diverted if and only if the filter evaluates to "true".
 
-(ip? ip.DstAddr != 127.0.0.1: true)         # Ignore localhost
+!loopback                                   # Ignore loopback
     and
 (tcp? tcp.DstPort != 9001 and               # Ignore Tor traffic
       tcp.SrcPort != 9001 and 

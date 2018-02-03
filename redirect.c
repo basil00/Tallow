@@ -162,7 +162,7 @@ static void send_packet(HANDLE handle, void *packet, size_t packet_len,
     PWINDIVERT_ADDRESS addr)
 {
     addr->Direction = WINDIVERT_DIRECTION_INBOUND;
-    WinDivertHelperCalcChecksums(packet, packet_len, 0);
+    WinDivertHelperCalcChecksums(packet, packet_len, addr, 0);
     if (!WinDivertSend(handle, packet, packet_len, addr, NULL))
         debug("Send packet failed (err=%d)\n", (int)GetLastError());
 }
@@ -230,7 +230,7 @@ redirect_start_error:
     {
         // Use the default filter:
         const char *default_filter =
-            "(ipv6 or ip.DstAddr != 127.0.0.1) and "
+            "!loopback and "
             "(not tcp or (tcp and tcp.DstPort != 9001 and "
                 "tcp.SrcPort != 9001 and "
                 "tcp.DstPort != 9030 and "
