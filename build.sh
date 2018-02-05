@@ -50,7 +50,7 @@ unzip -o $TOR.zip
 
 echo "Building Tallow..."
 cd ..
-make
+make VERSION=$VERSION WINDIVERT=$WINDIVERT
 
 echo "Copying \"tallow.exe\"..."
 cp tallow.exe install/.

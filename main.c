@@ -319,7 +319,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
     }
 
     // (2) Create the window:
-    window = CreateWindow(PROGNAME "_WINDOW", PROGNAME " (beta)",
+    window = CreateWindow(PROGNAME "_WINDOW", PROGNAME " " STR(VERSION),
         WS_OVERLAPPEDWINDOW & (~WS_THICKFRAME),
         CW_USEDEFAULT, CW_USEDEFAULT, WINDOW_SIZE_X, WINDOW_SIZE_Y,
         NULL, NULL, instance, NULL);

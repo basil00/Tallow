@@ -107,8 +107,6 @@ TODOS
 Warnings
 ========
 
-Tallow is beta quality software.  There may be bugs.
-
 Currently Tallow makes no attempt to anonymize the content of traffic sent
 *through* the Tor network.  This information may be used to de-anonymize you.
 See [this

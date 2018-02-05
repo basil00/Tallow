@@ -1,3 +1,5 @@
 # Tallow default torrc file.
 GeoIPFile "geoip"
 GeoIPv6File "geoip6"
+FascistFirewall 1
+FirewallPorts 9001,9030
