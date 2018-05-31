@@ -23,11 +23,11 @@
 
 #include "windivert.h"
 
+#include "allow.h"
 #include "domain.h"
 #include "main.h"
 #include "redirect.h"
 
-#define MAX_PACKET          4096
 #define NUM_WORKERS         4
 #define MAX_FILTER          (1024-1)
 
@@ -122,7 +122,7 @@ static bool redirect_on = false;
 static HANDLE handle = INVALID_HANDLE_VALUE;
 static HANDLE handle_drop = INVALID_HANDLE_VALUE;
 static HANDLE workers[NUM_WORKERS] = {NULL};    // Worker threads
-static struct conn conns[UINT16_MAX] = {{0}};
+static struct conn conns[UINT16_MAX+1] = {{0}};
 static struct cleanup *queue = NULL;            // Cleanup queue.
 static struct cleanup *queue_0 = NULL;
 
@@ -229,12 +229,7 @@ redirect_start_error:
     if (!filter_read("traffic.divert", tor_filter, sizeof(tor_filter)-1))
     {
         // Use the default filter:
-        const char *default_filter =
-            "!loopback and "
-            "(not tcp or (tcp and tcp.DstPort != 9001 and "
-                "tcp.SrcPort != 9001 and "
-                "tcp.DstPort != 9030 and "
-                "tcp.SrcPort != 9030))";
+        const char *default_filter = "!loopback";
         size_t len = strlen(default_filter);
         if (len+1 > sizeof(tor_filter))
         {
@@ -321,6 +316,14 @@ static DWORD redirect_worker(LPVOID arg)
         UINT data_len;
         WinDivertHelperParsePacket(packet, packet_len, &iphdr, NULL, NULL,
             NULL, &tcphdr, &udphdr, &data, &data_len);
+
+        if (allow(&addr, tcphdr))
+        {
+            // Allow a packet from Tor:
+            if (!WinDivertSend(handle, packet, packet_len, &addr, NULL))
+                debug("Send packet failed (err=%d)\n", (int)GetLastError());
+            continue;
+        }
 
         if (addr.Direction == WINDIVERT_DIRECTION_INBOUND)
         {
@@ -689,7 +692,7 @@ static void handle_dns(HANDLE handle, PWINDIVERT_ADDRESS addr,
     while (i < data_len && data[i] != 0)
     {
         size_t len = data[i];
-        if (i + len >= DNS_MAX_NAME)
+        if (i + len >= DNS_MAX_NAME || i + len >= data_len)
             return;
         name[i++] = '.';
         for (size_t j = 0; j < len; j++, i++)
@@ -709,7 +712,9 @@ static void handle_dns(HANDLE handle, PWINDIVERT_ADDRESS addr,
         return;
     }
 
-    debug("Intercept DNS %s\n", (name[0] == '.'? name+1: name));
+    debug("Intercept DNS %s ---> %u.%u.%u.%u\n",
+        (name[0] == '.'? name+1: name), ADDR0(fake_addr), ADDR1(fake_addr),
+        ADDR2(fake_addr), ADDR3(fake_addr));
 
     // Construct a query response:
     size_t len = sizeof(struct dnshdr) + data_len + sizeof(struct dnsa);

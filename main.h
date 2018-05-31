@@ -1,6 +1,6 @@
 /*
  * main.h
- * Copyright (C) 2015, basil
+ * Copyright (C) 2018, basil
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,6 +30,8 @@
 #define ADDR1(a)            (((a) >> 16) & 0xFF)
 #define ADDR2(a)            (((a) >> 8) & 0xFF)
 #define ADDR3(a)            ((a) & 0xFF)
+
+#define MAX_PACKET          4096
 
 extern void status(const char *message, ...);
 extern void warning(const char *message, ...);

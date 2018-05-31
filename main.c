@@ -1,6 +1,6 @@
 /*
  * main.c
- * Copyright (C) 2015, basil
+ * Copyright (C) 2018, basil
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 #include <windows.h>
 #include <commctrl.h>
 
+#include "allow.h"
 #include "domain.h"
 #include "main.h"
 #include "redirect.h"
@@ -337,6 +338,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
         warning("failed to create Tor thread");
         return EXIT_FAILURE;
     }
+    CloseHandle(thread);
 
     // (4) Start clean-up thread:
     thread = CreateThread(NULL, 0,
@@ -346,6 +348,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
         warning("failed to create cleanup thread");
         return EXIT_FAILURE;
     }
+    CloseHandle(thread);
 
     ShowWindow(window, cmd_show);
     UpdateWindow(window);
@@ -426,6 +429,8 @@ static DWORD WINAPI tor_thread(LPVOID arg)
         warning("failed to assign Tor process to Tor job object");
         exit(EXIT_FAILURE);
     }
+
+    allow_init(pi.dwProcessId);
 
     // Forward Tor messages to the status bar:
     while (TRUE)
