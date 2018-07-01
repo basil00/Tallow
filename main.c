@@ -292,17 +292,27 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
         putchar('\n');
     }
 
+    puts(PROGNAME " " STR(VERSION) " Copyright (C) 2018 basil\n");
+    puts("License GPLv3+: GNU GPL version 3 or later "
+        "<http://gnu.org/licenses/gpl.html>.");
+    puts("This is free software: you are free to change and redistribute it.");
+    puts("There is NO WARRANTY, to the extent permitted by law.");
+    putchar('\n');
+
     WNDCLASSEX class;
     HWND window;
 
     // (0) Init stuff:
     srand(random());
+    debug("Initializing DNS handler...\n");
     domain_init();
+    debug("Initializing packet redirection...\n");
     redirect_init();
     option_force_socks4a  = restore_option(OPTION_FORCE_SOCKS4a_ONLY);
     option_force_web_only = restore_option(OPTION_FORCE_WEB_ONLY);
 
     // (1) Register the window class:
+    debug("Initializing GUI...\n");
     memset(&class, 0, sizeof(class));
     class.cbSize = sizeof(WNDCLASSEX);
     class.lpfnWndProc = window_proc;
@@ -331,6 +341,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
     }
 
     // (3) Start Tor:
+    debug("Initializing Tor thread...\n");
     HANDLE thread = CreateThread(NULL, 0,
         (LPTHREAD_START_ROUTINE)tor_thread, NULL, 0, NULL);
     if (thread == NULL)
@@ -341,6 +352,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
     CloseHandle(thread);
 
     // (4) Start clean-up thread:
+    debug("Initializing cleanup thread...\n");
     thread = CreateThread(NULL, 0,
         (LPTHREAD_START_ROUTINE)cleanup_thread, NULL, 0, NULL);
     if (thread == NULL)
@@ -350,9 +362,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
     }
     CloseHandle(thread);
 
+    debug("Launching GUI...\n");
     ShowWindow(window, cmd_show);
     UpdateWindow(window);
-
+ 
     // (5) Handle messages:
     MSG message;
     for (size_t i = 0; GetMessage(&message, NULL, 0, 0) > 0; i++)
