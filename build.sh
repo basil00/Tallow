@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# (C) 2018, all rights reserved,
+# (C) 2019, all rights reserved,
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,8 +20,8 @@
 
 set -e
 
-WINDIVERT=WinDivert-1.4.2-A-MINGW
-TOR=tor-win32-0.3.3.7
+WINDIVERT=WinDivert-2.0.0-rc
+TOR=tor-win32-0.3.5.7
 VERSION=`cat VERSION`
 
 echo "Checking for dependencies..."
@@ -66,7 +66,7 @@ echo "Copying \"LICENSE\"..."
 cp LICENSE install/.
 
 for FILE in \
-       "$WINDIVERT/x86_64/WinDivert64.sys" \
+       "$WINDIVERT/x64/WinDivert64.sys" \
        "$WINDIVERT/x86/WinDivert32.sys" \
        "$WINDIVERT/x86/WinDivert.dll" \
        "Tor/libeay32.dll" \

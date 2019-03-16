@@ -1,6 +1,6 @@
 /*
  * main.c
- * Copyright (C) 2018, basil
+ * Copyright (C) 2019, basil
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,14 +23,13 @@
 #include <windows.h>
 #include <commctrl.h>
 
-#include "allow.h"
 #include "domain.h"
 #include "main.h"
 #include "redirect.h"
 
 // GUI parameters:
-#define STATUS_TOR_ON_COLOR         RGB(196, 255, 196)
-#define STATUS_TOR_OFF_COLOR        RGB(255, 196, 196)
+#define STATUS_TOR_ON_COLOR         RGB(150, 255, 150)
+#define STATUS_TOR_OFF_COLOR        RGB(255, 150, 150)
 #define BUTTON_OFFSET_X             10
 #define BUTTON_OFFSET_Y             10
 #define BUTTON_SIZE_X               138
@@ -39,8 +38,8 @@
     (10 + 2 * BUTTON_SIZE_X + 3 * BUTTON_OFFSET_X)
 #define WINDOW_SIZE_Y               \
     (50 + BUTTON_SIZE_Y + 2 * BUTTON_OFFSET_Y)
-#define TOR_ON_MESSAGE              "Tor divert is ON"
-#define TOR_OFF_MESSAGE             "Tor divert is OFF"
+#define TOR_ON_MESSAGE              "Tor is ON"
+#define TOR_OFF_MESSAGE             "Tor is OFF"
 #define ID_TOR_BUTTON               3100
 #define ID_DIRECT_CHECK             3101
 #define ID_WEB_CHECK                3102
@@ -51,6 +50,8 @@ static DWORD WINAPI cleanup_thread(DWORD arg);
 static void save_option(const char *option, bool val0);
 static bool restore_option(const char *option);
 
+// Debugging.
+static HANDLE debug_lock = NULL;
 
 // The GUI:
 static HWND button = NULL;
@@ -303,16 +304,17 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
     HWND window;
 
     // (0) Init stuff:
+    debug_lock = create_lock();
     srand(random());
-    debug("Initializing DNS handler...\n");
+    debug(MAGENTA, "INIT", "Initializing DNS handler...");
     domain_init();
-    debug("Initializing packet redirection...\n");
+    debug(MAGENTA, "INIT", "Initializing packet redirection...");
     redirect_init();
     option_force_socks4a  = restore_option(OPTION_FORCE_SOCKS4a_ONLY);
     option_force_web_only = restore_option(OPTION_FORCE_WEB_ONLY);
 
     // (1) Register the window class:
-    debug("Initializing GUI...\n");
+    debug(MAGENTA, "INIT", "Initializing GUI...");
     memset(&class, 0, sizeof(class));
     class.cbSize = sizeof(WNDCLASSEX);
     class.lpfnWndProc = window_proc;
@@ -341,7 +343,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
     }
 
     // (3) Start Tor:
-    debug("Initializing Tor thread...\n");
+    debug(MAGENTA, "INIT", "Initializing Tor thread...");
     HANDLE thread = CreateThread(NULL, 0,
         (LPTHREAD_START_ROUTINE)tor_thread, NULL, 0, NULL);
     if (thread == NULL)
@@ -352,7 +354,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
     CloseHandle(thread);
 
     // (4) Start clean-up thread:
-    debug("Initializing cleanup thread...\n");
+    debug(MAGENTA, "INIT", "Initializing cleanup thread...");
     thread = CreateThread(NULL, 0,
         (LPTHREAD_START_ROUTINE)cleanup_thread, NULL, 0, NULL);
     if (thread == NULL)
@@ -362,7 +364,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
     }
     CloseHandle(thread);
 
-    debug("Launching GUI...\n");
+    debug(MAGENTA, "INIT", "Launching GUI...");
     ShowWindow(window, cmd_show);
     UpdateWindow(window);
  
@@ -429,7 +431,7 @@ static DWORD WINAPI tor_thread(LPVOID arg)
     // NOTE: Tor warns about allowing external connections.  However, such
     //       connections are blocked (see redirect_init).
     if (!CreateProcess(tor_path,
-        "tor.exe --SocksPort 0.0.0.0:" STR(TOR_PORT) " -f .\\torrc",
+        "tor.exe --SocksPort 127.0.0.1:" STR(TOR_PORT) " -f .\\torrc",
         NULL, NULL, TRUE, CREATE_BREAKAWAY_FROM_JOB, NULL, NULL, &si, &pi))
     {
         warning("failed to start Tor");
@@ -443,7 +445,7 @@ static DWORD WINAPI tor_thread(LPVOID arg)
         exit(EXIT_FAILURE);
     }
 
-    allow_init(pi.dwProcessId);
+    redirect_whitelist_init(pi.dwProcessId);
 
     // Forward Tor messages to the status bar:
     while (TRUE)
@@ -489,7 +491,6 @@ static DWORD WINAPI cleanup_thread(DWORD arg)
         Sleep(8000 + random() % 1024);
 
         domain_cleanup(count);
-        redirect_cleanup(count);
         count++;
     }
     return 0;
@@ -521,7 +522,7 @@ extern void status(const char *message, ...)
         buf[n++] = '\0';
     }
 
-    printf("%s\n", buf);
+    debug(CYAN, "STATUS", buf);
 
     if (status_bar != NULL)
     {
@@ -573,11 +574,7 @@ warning_failed:
     }
 
     // (2) Display the message.
-    HANDLE console = GetStdHandle(STD_ERROR_HANDLE);
-    SetConsoleTextAttribute(console, FOREGROUND_RED);
-    fprintf(stderr, "warning: %s\n", buf);
-    SetConsoleTextAttribute(console,
-        FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE);
+    debug(RED, "WARNING", buf);
     MessageBox(NULL, buf, PROGNAME " - Warning", MB_ICONWARNING | MB_OK);
 }
 
@@ -610,5 +607,53 @@ static bool restore_option(const char *option)
     if (type != REG_DWORD)
         return true;
     return (bool)val;
+}
+
+// Debugging:
+void debug(int color, const char *event, const char *message, ...)
+{
+    HANDLE console;
+    console = GetStdHandle(STD_ERROR_HANDLE);
+    if (console == NULL || console == INVALID_HANDLE_VALUE)
+        return;
+
+    va_list args;
+    va_start(args, message);
+    lock(debug_lock);
+    switch (color)
+    {
+        case RED:
+            SetConsoleTextAttribute(console, FOREGROUND_RED);
+            break;
+        case GREEN:
+            SetConsoleTextAttribute(console, FOREGROUND_GREEN);
+            break;
+        case BLUE:
+            SetConsoleTextAttribute(console, FOREGROUND_BLUE);
+            break;
+        case YELLOW:
+            SetConsoleTextAttribute(console, FOREGROUND_RED |
+                FOREGROUND_GREEN);
+            break;
+        case MAGENTA:
+            SetConsoleTextAttribute(console, FOREGROUND_RED |
+                FOREGROUND_BLUE);
+            break;
+        case CYAN:
+            SetConsoleTextAttribute(console, FOREGROUND_GREEN |
+                FOREGROUND_BLUE);
+            break;
+        default:
+            break;
+    }
+    fputs(event, stderr);
+    SetConsoleTextAttribute(console, FOREGROUND_RED | FOREGROUND_GREEN |
+        FOREGROUND_BLUE);
+    putc(' ', stderr);
+    vfprintf(stderr, message, args);
+    putc('\n', stderr);
+    unlock(debug_lock);
+
+    va_end(args);
 }
 

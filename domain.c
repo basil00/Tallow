@@ -1,6 +1,6 @@
 /*
  * domain.c
- * Copyright (C) 2015, basil
+ * Copyright (C) 2019, basil
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -121,13 +121,13 @@ extern uint32_t domain_lookup_addr(const char *name0)
 
     if (domain_blacklist_lookup(blacklist, name0))
     {
-        debug("Block %s\n", name0);
+        debug(RED, "BLOCK", "%s", name0);
         return 0;       // Blocked!
     }
 
     if (InterlockedIncrement64(&rate) >= RATE_LIMIT)
     {
-        debug("Block (rate limit)\n");
+        debug(RED, "BLOCK", "%s (rate limit)", name0);
         return 0;
     }
 
@@ -139,7 +139,7 @@ extern uint32_t domain_lookup_addr(const char *name0)
     if (names[idx] != NULL)
     {
         // Name table is full!
-        debug("Block %s (name entry is full)\n", name0);
+        debug(RED, "BLOCK", "%s (name entry is full)", name0);
         return 0;
     }
 
@@ -220,7 +220,7 @@ extern void domain_cleanup(size_t count)
         unlock(names_lock);
 
         if (old_name != NULL)
-            debug("Cleanup name %s\n", old_name->name);
+            debug(YELLOW, "CLEANUP", "%s", old_name->name);
         domain_deref(old_name);
     }
 }

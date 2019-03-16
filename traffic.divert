@@ -9,7 +9,7 @@
 #   contents of this file.
 # - Traffic is diverted if and only if the filter evaluates to "true".
 
-!loopback                                   # Ignore loopback
+true
 
 # Examples:
 #

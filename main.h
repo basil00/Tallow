@@ -1,6 +1,6 @@
 /*
  * main.h
- * Copyright (C) 2018, basil
+ * Copyright (C) 2019, basil
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,6 +32,13 @@
 #define ADDR3(a)            ((a) & 0xFF)
 
 #define MAX_PACKET          4096
+
+#define RED                 1
+#define GREEN               2
+#define BLUE                3
+#define YELLOW              4
+#define MAGENTA             5
+#define CYAN                6
 
 extern void status(const char *message, ...);
 extern void warning(const char *message, ...);
@@ -83,7 +90,6 @@ static inline unsigned random(void)
 }
 
 // Debugging:
-#define debug(msg, ...)                                                 \
-    fprintf(stderr, msg, ## __VA_ARGS__)
+extern void debug(int color, const char *event, const char *message, ...);
 
 #endif

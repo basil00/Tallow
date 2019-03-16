@@ -1,6 +1,6 @@
 /*
  * redirect.c
- * Copyright (C) 2018, basil
+ * Copyright (C) 2019, basil
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,13 +23,14 @@
 
 #include "windivert.h"
 
-#include "allow.h"
 #include "domain.h"
 #include "main.h"
 #include "redirect.h"
 
-#define NUM_WORKERS         4
+#define PRIORITY            1750
+#define NUM_WORKERS         2
 #define MAX_FILTER          (1024-1)
+#define INET4_ADDRSTRLEN    16
 
 // SOCKS4a headers
 #define SOCKS_USERID_SIZE   (256 + 8)
@@ -78,16 +79,32 @@ struct dnsa
     uint32_t addr;
 } __attribute__((__packed__));
 
+// Pended SYN.
+struct syn
+{
+    WINDIVERT_ADDRESS addr;
+    UINT packet_len;
+    uint8_t packet[];
+};
+
 // Connections:
 #define STATE_NOT_CONNECTED         0
-#define STATE_SYN_SEEN              1
-#define STATE_SYNACK_SEEN           2
-#define STATE_ESTABLISHED           3
-#define STATE_FIN_SEEN              4
-struct conn
+#define STATE_SYN_WAIT              1
+#define STATE_SYN_SEEN              2
+#define STATE_SYNACK_SEEN           3
+#define STATE_ESTABLISHED           4
+#define STATE_FIN_WAIT              5
+#define STATE_WHITELISTED           0xFF
+struct connection
 {
-    uint16_t port;
     uint8_t state;
+    uint16_t local_port;
+    uint16_t remote_port;
+    uint32_t local_addr;
+    uint32_t remote_addr;
+    uint32_t if_idx;
+    uint32_t sub_if_idx;
+    struct syn *syn;
 } __attribute__((__packed__));
 
 // Cleanup.
@@ -101,35 +118,36 @@ struct cleanup
 // Prototypes:
 static void flush_dns_cache(void);
 static DWORD redirect_worker(LPVOID arg);
+static DWORD whitelist_worker(LPVOID arg);
+static void reset(HANDLE handle, PWINDIVERT_IPHDR iphdr,
+    PWINDIVERT_TCPHDR tcphdr, size_t data_len, PWINDIVERT_ADDRESS addr);
 static void redirect_tcp(HANDLE handle, PWINDIVERT_ADDRESS addr,
     PWINDIVERT_IPHDR iphdr, PWINDIVERT_TCPHDR tcphdr, char *packet,
     size_t packet_len, char *data, size_t data_len);
 static void handle_dns(HANDLE handle, PWINDIVERT_ADDRESS addr,
     PWINDIVERT_IPHDR iphdr, PWINDIVERT_UDPHDR udphdr, char *data,
     size_t data_len);
-static void socks4a_connect_1_of_2(struct conn *conn, HANDLE handle,
+static void socks4a_connect_1_of_2(struct connection *conn, HANDLE handle,
     PWINDIVERT_ADDRESS addr, PWINDIVERT_IPHDR iphdr, PWINDIVERT_TCPHDR tcphdr);
-static void socks4a_connect_2_of_2(struct conn *conn, HANDLE handle,
+static void socks4a_connect_2_of_2(struct connection *conn, HANDLE handle,
     PWINDIVERT_ADDRESS addr, PWINDIVERT_IPHDR iphdr, PWINDIVERT_TCPHDR tcphdr,
     struct socks4a_rep *sockshdr);
 extern bool filter_read(const char *filename, char *filter, size_t len);
-static void queue_cleanup(uint32_t addr, uint16_t port);
-static void debug_addr(uint32_t addr, uint16_t port);
 
 // State:
+static uint32_t loopback_addr;
 static char filter[MAX_FILTER+1];
 static bool redirect_on = false;
 static HANDLE handle = INVALID_HANDLE_VALUE;
 static HANDLE handle_drop = INVALID_HANDLE_VALUE;
 static HANDLE workers[NUM_WORKERS] = {NULL};    // Worker threads
-static struct conn conns[UINT16_MAX+1] = {{0}};
-static struct cleanup *queue = NULL;            // Cleanup queue.
-static struct cleanup *queue_0 = NULL;
+static struct connection conns[UINT16_MAX+1] = {{0}};
+static HANDLE conns_lock;
 
 // Flush the DNS cache:
 static void flush_dns_cache(void)
 {
-    debug("Flush DNS cache\n");
+    debug(YELLOW, "FLUSH", "DNS cache");
     char dllname[MAX_PATH];
     UINT len = GetSystemDirectory(dllname, sizeof(dllname));
     if (len == 0)
@@ -157,38 +175,69 @@ dir_error:
     FreeLibrary(lib);
 }
 
-// Send a packet asynchronously:
+// Send a packet:
 static void send_packet(HANDLE handle, void *packet, size_t packet_len,
     PWINDIVERT_ADDRESS addr)
 {
-    addr->Direction = WINDIVERT_DIRECTION_INBOUND;
+    addr->Outbound = 1;
     WinDivertHelperCalcChecksums(packet, packet_len, addr, 0);
-    if (!WinDivertSend(handle, packet, packet_len, addr, NULL))
-        debug("Send packet failed (err=%d)\n", (int)GetLastError());
+    if (!WinDivertSend(handle, packet, packet_len, NULL, addr))
+        debug(RED, "ERROR", "Send packet failed (err=%d)",
+            (int)GetLastError());
+}
+
+// Reset worker thread:
+static void reset_worker(LPVOID arg)
+{
+    HANDLE handle = (LPVOID)arg;
+
+    char packet[MAX_PACKET];
+    UINT packet_len;
+    WINDIVERT_ADDRESS addr;
+
+    while (true)
+    {
+        if (!WinDivertRecv(handle, packet, sizeof(packet), &packet_len, &addr))
+            continue;
+
+        PWINDIVERT_IPHDR iphdr = NULL;
+        PWINDIVERT_TCPHDR tcphdr = NULL;
+        UINT data_len;
+        WinDivertHelperParsePacket(packet, packet_len, &iphdr, NULL, NULL,
+            NULL, NULL, &tcphdr, NULL, NULL, &data_len, NULL, NULL);
+   
+        if (iphdr == NULL || tcphdr == NULL)
+            continue;
+    
+        reset(handle, iphdr, tcphdr, data_len, &addr);
+    }
 }
 
 // Init this module:
 extern void redirect_init(void)
 {
-    // Stop external connections to Tor:
+    (void)WinDivertHelperParseIPv4Address("127.0.0.1", &loopback_addr);
+    loopback_addr = ntohl(loopback_addr);
+    conns_lock = create_lock();
+
+    // Prevent "fake" IPs leaking to the internet.
     HANDLE handle = WinDivertOpen(
-        "inbound and tcp.DstPort == " STR(TOR_PORT),
-        WINDIVERT_LAYER_NETWORK, -755, WINDIVERT_FLAG_DROP);
+        "outbound and ip.DstAddr >= " ADDR_BASE_STR " and ip.DstAddr <= "
+            ADDR_MAX_STR,
+        WINDIVERT_LAYER_NETWORK, -1755, 0);
     if (handle == INVALID_HANDLE_VALUE)
     {
-redirect_init_error:
         warning("failed to open WinDivert filter");
         exit(EXIT_FAILURE);
     }
-
-    // Prevent "fake" IPs leaking to the internet (which may indicate the use
-    // of this program):
-    handle = WinDivertOpen(
-        "outbound and ip.DstAddr >= " STR(ADDR_BASE) " and ip.DstAddr <= "
-            STR(ADDR_MAX),
-        WINDIVERT_LAYER_NETWORK, 755, WINDIVERT_FLAG_DROP);
-    if (handle == INVALID_HANDLE_VALUE)
-        goto redirect_init_error;
+    HANDLE thread = CreateThread(NULL, 1,
+        (LPTHREAD_START_ROUTINE)reset_worker, (LPVOID)handle, 0, NULL);
+    if (thread == NULL)
+    {
+        warning("failed to create reset worker thread");
+        exit(EXIT_FAILURE);
+    }
+    CloseHandle(thread);
 
     // Read the filter:
     if (!filter_read("traffic.deny", filter, sizeof(filter)))
@@ -203,20 +252,20 @@ redirect_init_error:
         }
         memcpy(filter, default_filter, len+1);
     }
-    debug("Filter is \"%s\"\n", filter);
+    debug(GREEN, "INFO", "Filter is \"%s\"", filter);
 }
 
 // Start traffic redirect through Tor:
 extern void redirect_start(void)
 {
-    debug("Tor divert START\n");
+    debug(GREEN, "INFO", "Tor divert START");
 
     if (handle != INVALID_HANDLE_VALUE)
         return;
 
     // Drop traffic from the loaded filter:
-    debug("Traffic deny filter is \"%s\"\n", filter);
-    handle_drop = WinDivertOpen(filter, WINDIVERT_LAYER_NETWORK, -753,
+    debug(GREEN, "INFO", "Traffic deny filter is \"%s\"", filter);
+    handle_drop = WinDivertOpen(filter, WINDIVERT_LAYER_NETWORK, PRIORITY+1,
         WINDIVERT_FLAG_DROP);
     if (handle_drop == INVALID_HANDLE_VALUE)
     {
@@ -229,7 +278,7 @@ redirect_start_error:
     if (!filter_read("traffic.divert", tor_filter, sizeof(tor_filter)-1))
     {
         // Use the default filter:
-        const char *default_filter = "!loopback";
+        const char *default_filter = "true";
         size_t len = strlen(default_filter);
         if (len+1 > sizeof(tor_filter))
         {
@@ -238,20 +287,32 @@ redirect_start_error:
         }
         memcpy(tor_filter, default_filter, len+1);
     }
-    debug("Traffic divert filter is \"%s\"\n", tor_filter);
-    handle = WinDivertOpen(tor_filter, WINDIVERT_LAYER_NETWORK, -752, 0);
+    debug(GREEN, "INFO", "Traffic divert filter is \"%s\"", tor_filter);
+    handle = WinDivertOpen(tor_filter, WINDIVERT_LAYER_NETWORK, PRIORITY, 0);
     if (handle == INVALID_HANDLE_VALUE)
         goto redirect_start_error;
 
     flush_dns_cache();
 
     // Max-out the packet queue:
-    WinDivertSetParam(handle, WINDIVERT_PARAM_QUEUE_LEN, 8192);
-    WinDivertSetParam(handle, WINDIVERT_PARAM_QUEUE_TIME, 1024);
+    WinDivertSetParam(handle, WINDIVERT_PARAM_QUEUE_LENGTH,
+        WINDIVERT_PARAM_QUEUE_LENGTH_MAX);
+    WinDivertSetParam(handle, WINDIVERT_PARAM_QUEUE_SIZE,
+        WINDIVERT_PARAM_QUEUE_SIZE_MAX);
+    WinDivertSetParam(handle, WINDIVERT_PARAM_QUEUE_TIME,
+        WINDIVERT_PARAM_QUEUE_TIME_MAX);
 
     // Launch threads:
     redirect_on = true;
-    memset(conns, 0, sizeof(conns));
+    for (size_t i = 0; i < UINT16_MAX; i++)
+    {
+        lock(conns_lock);
+        uint8_t state = conns[i].state;
+        memset(&conns[i], 0, sizeof(conns[i]));
+        if (state == STATE_WHITELISTED)
+            conns[i].state = state;
+        unlock(conns_lock);
+    }
     for (size_t i = 0; i < NUM_WORKERS; i++)
     {
         workers[i] = CreateThread(NULL, MAX_PACKET*3,
@@ -267,27 +328,45 @@ redirect_start_error:
 // Stop traffic redirect through Tor:
 extern void redirect_stop(void)
 {
-    debug("Tor divert STOP\n");
+    debug(GREEN, "INFO", "Tor divert STOP");
 
     if (handle == INVALID_HANDLE_VALUE)
         return;
 
-    // Close the WinDivert handle; will cause the workers to exit.
-    redirect_on = false;
-    if (!WinDivertClose(handle) || !WinDivertClose(handle_drop))
+    // Shutdown the WinDivert handle; will cause the workers to exit.
+    if (!WinDivertShutdown(handle, WINDIVERT_SHUTDOWN_RECV))
     {
         warning("failed to close WinDivert filter");
         exit(EXIT_FAILURE);
     }
-    handle = INVALID_HANDLE_VALUE;
-    handle_drop = INVALID_HANDLE_VALUE;
-
     for (size_t i = 0; i < NUM_WORKERS; i++)
     {
         WaitForSingleObject(workers[i], INFINITE);
+        CloseHandle(workers[i]);
         workers[i] = NULL;
     }
 
+    WinDivertClose(handle);
+    WinDivertClose(handle_drop);
+
+    // Reset all connections:
+    for (size_t i = 0; i < UINT16_MAX; i++)
+    {
+        lock(conns_lock);
+        switch (conns[i].state)
+        {
+            case STATE_WHITELISTED:
+                break;
+            default:
+                memset(&conns[i], 0, sizeof(conns[i]));
+                break;
+        }
+        unlock(conns_lock);
+    }
+    handle = INVALID_HANDLE_VALUE;
+    handle_drop = INVALID_HANDLE_VALUE;
+
+    redirect_on = false;
     flush_dns_cache();
 }
 
@@ -301,11 +380,14 @@ static DWORD redirect_worker(LPVOID arg)
     UINT packet_len;
     WINDIVERT_ADDRESS addr;
 
-    while (redirect_on)
+    while (true)
     {
-        if (!WinDivertRecv(handle, packet, sizeof(packet), &addr, &packet_len))
+        if (!WinDivertRecv(handle, packet, sizeof(packet), &packet_len, &addr))
         {
-            // Silently ignore any error.
+            if (GetLastError() == ERROR_NO_DATA)
+                break;
+            debug(RED, "ERROR", "Receive packet failed (err=%d)",
+                (int)GetLastError());
             continue;
         }
 
@@ -315,21 +397,8 @@ static DWORD redirect_worker(LPVOID arg)
         PVOID data = NULL;
         UINT data_len;
         WinDivertHelperParsePacket(packet, packet_len, &iphdr, NULL, NULL,
-            NULL, &tcphdr, &udphdr, &data, &data_len);
+            NULL, NULL, &tcphdr, &udphdr, &data, &data_len, NULL, NULL);
 
-        if (allow(&addr, tcphdr))
-        {
-            // Allow a packet from Tor:
-            if (!WinDivertSend(handle, packet, packet_len, &addr, NULL))
-                debug("Send packet failed (err=%d)\n", (int)GetLastError());
-            continue;
-        }
-
-        if (addr.Direction == WINDIVERT_DIRECTION_INBOUND)
-        {
-            // All inbound traffic is dropped:
-            continue;
-        }
         if (udphdr != NULL && ntohs(udphdr->DstPort) == 53)
             handle_dns(handle, &addr, iphdr, udphdr, data, data_len);
         else if (tcphdr != NULL)
@@ -339,153 +408,395 @@ static DWORD redirect_worker(LPVOID arg)
     return 0;
 }
 
+// Handle a SYN:
+static void handle_syn(HANDLE handle, struct connection *conn)
+{
+    // Assumes we are holding conns_lock...
+
+    struct syn *syn = conn->syn;
+    conn->syn = NULL;
+    if (syn == NULL)
+    {
+        unlock(conns_lock);
+        return;
+    }
+    PWINDIVERT_IPHDR iphdr = NULL;
+    PWINDIVERT_TCPHDR tcphdr = NULL;
+    WinDivertHelperParsePacket(syn->packet, syn->packet_len, &iphdr, NULL,
+        NULL, NULL, NULL, &tcphdr, NULL, NULL, NULL, NULL, NULL);
+    if (iphdr == NULL || tcphdr == NULL)
+    {
+        unlock(conns_lock);
+        free(syn);
+        return;
+    }
+
+    switch (conn->state)
+    {
+        case STATE_WHITELISTED:
+            // This connection has been whitelisted.  Send the SYN using
+            // the normal (non-Tor) path:
+            unlock(conns_lock);
+            send_packet(handle, syn->packet, syn->packet_len, &syn->addr);
+
+            char local_addr_str[INET4_ADDRSTRLEN],
+                 remote_addr_str[INET4_ADDRSTRLEN];
+            WinDivertHelperFormatIPv4Address(ntohl(iphdr->SrcAddr),
+                local_addr_str, sizeof(local_addr_str));
+            WinDivertHelperFormatIPv4Address(ntohl(iphdr->DstAddr),
+                remote_addr_str, sizeof(remote_addr_str));
+            debug(GREEN, "WHITELIST", "Tor connection %s:%u ---> %s:%u",
+                local_addr_str, ntohs(tcphdr->SrcPort),
+                remote_addr_str, ntohs(tcphdr->DstPort));
+            free(syn);
+            return;
+
+        case STATE_SYN_WAIT:
+        {
+            // This connection must be redirected to Tor:
+            uint16_t remote_port = ntohs(tcphdr->DstPort);
+            if (option_force_web_only &&
+                remote_port != 80 &&            // HTTP
+                remote_port != 443)             // HTTPS
+            {
+                unlock(conns_lock);
+                uint32_t srcaddr = ntohl(iphdr->SrcAddr),
+                         dstaddr = ntohl(iphdr->DstAddr);
+                char srcaddr_str[INET4_ADDRSTRLEN+1];
+                WinDivertHelperFormatIPv4Address(srcaddr, srcaddr_str,
+                    sizeof(srcaddr_str));
+                struct name *name = domain_lookup_name(dstaddr);
+                if (name != NULL)
+                {
+                    debug(GREEN, "INFO", "Ignoring non-web connect %s:%u ---> "
+                        "%s:%u", srcaddr_str, ntohs(tcphdr->SrcPort),
+                        name->name, remote_port);
+                    domain_deref(name);
+                }
+                else
+                {
+                    char dstaddr_str[INET4_ADDRSTRLEN+1];
+                    WinDivertHelperFormatIPv4Address(dstaddr, dstaddr_str,
+                        sizeof(dstaddr_str));
+                    debug(GREEN, "INFO", "Ignoring non-web connect %s:%u ---> "
+                        "%s:%u", srcaddr_str, ntohs(tcphdr->SrcPort),
+                        dstaddr_str, remote_port);
+                }
+                free(syn);
+                return;
+            }
+
+            conn->state       = STATE_SYN_SEEN;
+            conn->remote_port = tcphdr->DstPort;
+            conn->remote_addr = iphdr->DstAddr;
+            conn->local_port  = tcphdr->SrcPort;
+            conn->local_addr  = iphdr->SrcAddr;
+            conn->if_idx      = syn->addr.Network.IfIdx;
+            conn->sub_if_idx  = syn->addr.Network.SubIfIdx;
+            unlock(conns_lock);
+
+            // Adjust the TCP seq number so a SOCKS4a header can be
+            // injected into the stream.  This makes it possible to
+            // "glue" the TCP connection to a SOCKS4a connection.
+            tcphdr->SeqNum = htonl(ntohl(tcphdr->SeqNum) -
+                sizeof(struct socks4a_req));
+            tcphdr->DstPort = htons(TOR_PORT);
+            syn->addr.Network.IfIdx = 1;            // Loopback
+            syn->addr.Network.SubIfIdx = 0;
+            syn->addr.Loopback = 1;
+            iphdr->DstAddr = loopback_addr;
+            iphdr->SrcAddr = loopback_addr;
+            send_packet(handle, syn->packet, syn->packet_len, &syn->addr);
+            free(syn);
+            return;
+        }
+
+        default:
+            unlock(conns_lock);
+            return;
+    }
+}
+
+// Pend a SYN:
+static void pend_syn(HANDLE handle, uint16_t local_port, char *packet,
+    size_t packet_len, PWINDIVERT_ADDRESS addr)
+{
+    struct syn *syn = (struct syn *)malloc(sizeof(struct syn) + packet_len);
+    if (syn == NULL)
+    {
+        warning("failed to allocate memory");
+        exit(EXIT_FAILURE);
+    }
+    memcpy(&syn->addr, addr, sizeof(syn->addr));
+    syn->packet_len = packet_len;
+    memcpy(&syn->packet, packet, packet_len);
+
+    struct connection *conn = conns + local_port;
+    struct syn *old_syn = NULL;
+    lock(conns_lock);
+    old_syn = conn->syn;
+    conn->syn = syn;
+    handle_syn(handle, conn);
+    free(old_syn);
+}
+
+// Pend a CONNECT:
+static void pend_connect(HANDLE handle, uint16_t local_port, uint8_t state)
+{
+    if (!redirect_on)
+        return;
+
+    struct connection *conn = conns + local_port;
+    lock(conns_lock);
+    switch (conn->state)
+    {
+        case STATE_NOT_CONNECTED:
+        case STATE_FIN_WAIT:
+            conn->state = state;
+            handle_syn(handle, conn);
+            break;
+        default:
+            unlock(conns_lock);
+            break;
+    }
+}
+
 // Redirect TCP:
 static void redirect_tcp(HANDLE handle, PWINDIVERT_ADDRESS addr,
     PWINDIVERT_IPHDR iphdr, PWINDIVERT_TCPHDR tcphdr, char *packet,
     size_t packet_len, char *data, size_t data_len)
 {
-    struct conn *conn;
+    uint16_t local_port;
+    struct connection conn_copy, *conn = NULL;
 
-    bool drop = false;
-    uint16_t port;
-    if (ntohs(tcphdr->SrcPort) == TOR_PORT)
+#if 0
     {
-        // Tor ---> PC
-        port = tcphdr->DstPort;
-        conn = conns + port;
+        char src_addr_str[INET4_ADDRSTRLEN+1],
+             dst_addr_str[INET4_ADDRSTRLEN+1];
+        WinDivertHelperFormatIPv4Address(ntohl(iphdr->SrcAddr), src_addr_str,
+            sizeof(src_addr_str));
+        WinDivertHelperFormatIPv4Address(ntohl(iphdr->DstAddr), dst_addr_str,
+            sizeof(dst_addr_str));
+        debug(GREEN, "PACKET", "%s:%u %s %s:%u [Len=%u Syn=%u Ack=%u]",
+            src_addr_str, ntohs(tcphdr->SrcPort),
+            (addr->Outbound? "---->": "<----"),
+            dst_addr_str, ntohs(tcphdr->DstPort),
+            data_len, tcphdr->Syn, tcphdr->Ack);
+    }
+#endif
 
+    if (addr->Loopback &&
+            ntohs(tcphdr->SrcPort) != TOR_PORT &&
+            ntohs(tcphdr->DstPort) != TOR_PORT)
+    {
+        // Allow unrelated loopback traffic.
+        ;
+    }
+    else if (addr->Outbound && !addr->Loopback)
+    {
+        // OUTBOUND PATH: PC ---> Tor
+        local_port = tcphdr->SrcPort;
+        conn = conns + local_port;
+
+        if (tcphdr->Syn && !tcphdr->Ack)
+        {
+            pend_syn(handle, local_port, packet, packet_len, addr);
+            return;
+        }
+ 
+        lock(conns_lock);
+        switch (conn->state)
+        {
+            case STATE_WHITELISTED:
+                unlock(conns_lock);
+                send_packet(handle, packet, packet_len, addr);
+                return;
+
+            case STATE_FIN_WAIT:
+                if ((tcphdr->Fin || tcphdr->Rst) && 
+                    iphdr->DstAddr == conn->remote_addr &&
+                    tcphdr->DstPort == conn->remote_port)
+                {
+                    unlock(conns_lock);
+                    send_packet(handle, packet, packet_len, addr);
+                    return;
+                }
+                // Fallthrough:
+
+            case STATE_NOT_CONNECTED:
+            case STATE_SYN_SEEN:
+            case STATE_SYNACK_SEEN:
+                unlock(conns_lock);
+                return;
+
+            default:
+                unlock(conns_lock);
+                break;
+        }
+
+        // Redirect this packet to Tor
+        tcphdr->DstPort = htons(TOR_PORT);
+        addr->Network.IfIdx = 1;            // Loopback
+        addr->Network.SubIfIdx = 0;
+        addr->Loopback = 1;
+        iphdr->DstAddr = loopback_addr;
+        iphdr->SrcAddr = loopback_addr;
+    }
+    else if (addr->Outbound && addr->Loopback)
+    {
+        // REVERSE PATH: Tor ---> PC
+        local_port = tcphdr->DstPort;
+        conn = conns + local_port;
+        
+        lock(conns_lock);
         switch (conn->state)
         {
             case STATE_NOT_CONNECTED:
+            case STATE_FIN_WAIT:
+                unlock(conns_lock);
                 return;
             case STATE_SYN_SEEN:
                 if (!tcphdr->Syn || !tcphdr->Ack)
                 {
-                    drop = true;
-                    break;
+                    unlock(conns_lock);
+                    return;
                 }
 
                 // SYN-ACK
-                socks4a_connect_1_of_2(conn, handle, addr, iphdr,
-                    tcphdr);
+                memcpy(&conn_copy, conn, sizeof(conn_copy));
                 conn->state = STATE_SYNACK_SEEN;
+                unlock(conns_lock);
+                socks4a_connect_1_of_2(&conn_copy, handle, addr, iphdr,
+                    tcphdr);
                 return;
             
             case STATE_SYNACK_SEEN:
                 if (data_len != sizeof(struct socks4a_rep))
                 {
-                    drop = true;
-                    break;
+                    unlock(conns_lock);
+                    return;
                 }
+                memcpy(&conn_copy, conn, sizeof(conn_copy));
                 conn->state = STATE_ESTABLISHED;
+                unlock(conns_lock);
                 struct socks4a_rep *rep = (struct socks4a_rep *)data;
-                socks4a_connect_2_of_2(conn, handle, addr, iphdr, tcphdr, rep);
+                socks4a_connect_2_of_2(&conn_copy, handle, addr, iphdr, tcphdr,
+                    rep);
                 return;
 
             default:
                 break;
         }
 
-        tcphdr->SrcPort = conn->port;
+        // Redirect this packet to the PC (inbound)
+        tcphdr->SrcPort = conn->remote_port;
+        addr->Network.IfIdx = conn->if_idx;
+        addr->Network.SubIfIdx = conn->sub_if_idx;
+        addr->Loopback = 0;
+        addr->Outbound = 0;
+        iphdr->DstAddr = conn->local_addr;
+        iphdr->SrcAddr = conn->remote_addr;
+        unlock(conns_lock);
     }
-    else
+    else if (!addr->Outbound)
     {
-        // PC ---> Tor
-        port = tcphdr->SrcPort;
-        conn = conns + port;
-
-        switch (conn->state)
+        // Only whitelisted inbound traffic is allowed:
+        local_port = tcphdr->DstPort;
+        conn = conns + local_port;
+    
+        lock(conns_lock);
+        if (conn->state != STATE_WHITELISTED)
         {
-            case STATE_SYN_SEEN:
-            case STATE_SYNACK_SEEN:
-                drop = true;
-                break;
-
-            case STATE_NOT_CONNECTED:
-                if (tcphdr->Syn && !tcphdr->Ack && !tcphdr->Fin &&
-                    !tcphdr->Rst)
-                {
-                    // SYN
-                    uint16_t dstport = ntohs(tcphdr->DstPort);
-                    if (option_force_web_only &&
-                        dstport != 80 &&            // HTTP
-                        dstport != 443)             // HTTPS
-                    {
-                        uint32_t srcaddr = ntohl(iphdr->SrcAddr);
-                        debug("Ignoring non-web connect %u.%u.%u.%u:%u ---> ",
-                            ADDR0(srcaddr), ADDR1(srcaddr), ADDR2(srcaddr),
-                            ADDR3(srcaddr), ntohs(tcphdr->SrcPort));
-                        debug_addr(ntohl(iphdr->DstAddr), dstport);
-
-                        drop = true;
-                        break;
-                    }
-
-                    tcphdr->SeqNum = htonl(ntohl(tcphdr->SeqNum) -
-                        sizeof(struct socks4a_req));
-                    conn->state = STATE_SYN_SEEN;
-                    conn->port  = tcphdr->DstPort;
-                    queue_cleanup(ntohl(iphdr->DstAddr), port);
-                    break;
-                }
-                return;
-            
-            default:
-                break;
+            unlock(conns_lock);
+            return;
         }
-
-        tcphdr->DstPort = htons(TOR_PORT);
+        unlock(conns_lock);
     }
 
-    if (conn->state != STATE_FIN_SEEN && (tcphdr->Fin || tcphdr->Rst))
-    {
-        drop = false;
-        conn->state = STATE_FIN_SEEN;
-        queue_cleanup((ntohs(tcphdr->SrcPort) == TOR_PORT?
-            ntohl(iphdr->SrcAddr): ntohl(iphdr->DstAddr)), port);
-    }
-
-    if (!drop)
-    {
-        uint32_t dst_addr = iphdr->DstAddr;
-        iphdr->DstAddr = iphdr->SrcAddr;
-        iphdr->SrcAddr = dst_addr;
-        send_packet(handle, packet, packet_len, addr);
-    }
+    send_packet(handle, packet, packet_len, addr);
 }
 
-// Glue a normal TCP conn to SOCKS4a
-static void socks4a_connect_1_of_2(struct conn *conn, HANDLE handle,
+// Reset a connection.
+static void reset(HANDLE handle, PWINDIVERT_IPHDR iphdr,
+    PWINDIVERT_TCPHDR tcphdr, size_t data_len, PWINDIVERT_ADDRESS addr)
+{
+    struct
+    {
+        WINDIVERT_IPHDR iphdr;
+        WINDIVERT_TCPHDR tcphdr;
+    } rst;
+    
+    memset(&rst.iphdr, 0, sizeof(rst.iphdr));
+    rst.iphdr.Version = 4;
+    rst.iphdr.HdrLength = sizeof(rst.iphdr) / sizeof(uint32_t);
+    rst.iphdr.Id = htons(0xDEAD);
+    WINDIVERT_IPHDR_SET_DF(&rst.iphdr, 1);
+    rst.iphdr.Length = htons(sizeof(rst));
+    rst.iphdr.TTL = 64;
+    rst.iphdr.Protocol = IPPROTO_TCP;
+    rst.iphdr.SrcAddr = iphdr->DstAddr;
+    rst.iphdr.DstAddr = iphdr->SrcAddr;
+    
+    memset(&rst.tcphdr, 0, sizeof(rst.tcphdr));
+    rst.tcphdr.SrcPort = tcphdr->DstPort;
+    rst.tcphdr.DstPort = tcphdr->SrcPort;
+    rst.tcphdr.SeqNum = tcphdr->AckNum;
+    rst.tcphdr.AckNum = (tcphdr->Syn?
+        htonl(ntohl(tcphdr->SeqNum) + 1) :
+        htonl(ntohl(tcphdr->SeqNum) + data_len));
+    rst.tcphdr.HdrLength = sizeof(rst.tcphdr) / sizeof(uint32_t);
+    rst.tcphdr.Ack = 1;
+    rst.tcphdr.Rst = 1;
+
+    send_packet(handle, &rst, sizeof(rst), addr);
+
+    char local_addr_str[INET4_ADDRSTRLEN],
+         remote_addr_str[INET4_ADDRSTRLEN];
+    WinDivertHelperFormatIPv4Address(ntohl(iphdr->SrcAddr),
+        local_addr_str, sizeof(local_addr_str));
+    WinDivertHelperFormatIPv4Address(ntohl(iphdr->DstAddr),
+        remote_addr_str, sizeof(remote_addr_str));
+    debug(YELLOW, "RESET", "%s:%u -/-> %s:%u",
+        local_addr_str, ntohs(tcphdr->SrcPort),
+        remote_addr_str, ntohs(tcphdr->DstPort));
+}
+
+// Glue a normal TCP connection to SOCKS4a connection.
+static void socks4a_connect_1_of_2(struct connection *conn, HANDLE handle,
     PWINDIVERT_ADDRESS addr, PWINDIVERT_IPHDR iphdr, PWINDIVERT_TCPHDR tcphdr)
 {
-    uint32_t srcaddr = ntohl(iphdr->SrcAddr), dstaddr = ntohl(iphdr->DstAddr);
+    uint32_t dstaddr = ntohl(conn->remote_addr);
     struct name *name = domain_lookup_name(dstaddr);
+    char local_addr_str[INET4_ADDRSTRLEN+1],
+         remote_addr_str[INET4_ADDRSTRLEN+1];
     if (name == NULL && option_force_socks4a)
     {
-        debug("Ignoring non-SOCKs4a connect %u.%u.%u.%u:%u ---> "
-                "%u.%u.%u.%u:%u\n",
-            ADDR0(srcaddr), ADDR1(srcaddr), ADDR2(srcaddr), ADDR3(srcaddr),
-            ntohs(tcphdr->DstPort),
-            ADDR0(dstaddr), ADDR1(dstaddr), ADDR2(dstaddr), ADDR3(dstaddr),
-            ntohs(conn->port));
+        WinDivertHelperFormatIPv4Address(ntohl(conn->local_addr),
+            local_addr_str, sizeof(local_addr_str));
+        WinDivertHelperFormatIPv4Address(ntohl(conn->remote_addr),
+            remote_addr_str, sizeof(remote_addr_str));
+        debug(GREEN, "INFO", "Ignoring non-SOCKs4a connect %s:%u ---> %s:%u",
+            local_addr_str, ntohs(conn->local_port), remote_addr_str,
+            ntohs(conn->remote_port));
 
         // No corresponding name -- ignore
         return;
     }
-    if (name == NULL && !is_fake_addr(dstaddr))
+    if (name == NULL && is_fake_addr(dstaddr))
     {
-        debug("Ignoring stale connect %u.%u.%u.%u:%u ---> "
-                "%u.%u.%u.%u:%u\n",
-            ADDR0(srcaddr), ADDR1(srcaddr), ADDR2(srcaddr), ADDR3(srcaddr),
-            ntohs(tcphdr->DstPort),
-            ADDR0(dstaddr), ADDR1(dstaddr), ADDR2(dstaddr), ADDR3(dstaddr),
-            ntohs(conn->port));
+        WinDivertHelperFormatIPv4Address(ntohl(iphdr->SrcAddr), local_addr_str,
+            sizeof(local_addr_str));
+        WinDivertHelperFormatIPv4Address(ntohl(iphdr->DstAddr), remote_addr_str,
+            sizeof(remote_addr_str));
+        debug(GREEN, "INFO", "Ignoring stale connect %s:%u ---> %s:%u",
+            local_addr_str, ntohs(conn->local_port), remote_addr_str,
+            ntohs(conn->remote_port));
 
         // Address is stale -- ignore
         return;
     }
-    
-    // ACK to complete 3-way handshake (Tor-side):
+
+    // Send an ACK back to Tor.  This completes 3-way TCP handshake (Tor-side):
     struct
     {
         WINDIVERT_IPHDR iphdr;
@@ -500,8 +811,8 @@ static void socks4a_connect_1_of_2(struct conn *conn, HANDLE handle,
     ack.iphdr.Length = htons(sizeof(ack));
     ack.iphdr.TTL = 64;
     ack.iphdr.Protocol = IPPROTO_TCP;
-    ack.iphdr.SrcAddr = iphdr->DstAddr;
-    ack.iphdr.DstAddr = iphdr->SrcAddr;
+    ack.iphdr.SrcAddr = loopback_addr;
+    ack.iphdr.DstAddr = loopback_addr;
 
     memset(&ack.tcphdr, 0, sizeof(ack.tcphdr));
     ack.tcphdr.SrcPort = tcphdr->DstPort;
@@ -512,9 +823,12 @@ static void socks4a_connect_1_of_2(struct conn *conn, HANDLE handle,
     ack.tcphdr.Ack = 1;
     ack.tcphdr.Window = htons(8192);
 
+    addr->Network.IfIdx = 1;                // Loopback
+    addr->Network.SubIfIdx = 0;
+    addr->Loopback = 1;
     send_packet(handle, &ack, sizeof(ack), addr);
 
-    // SOCKS4a CONNECT request:
+    // Send a SOCKS4a CONNECT request to Tor.
     struct
     {
         WINDIVERT_IPHDR iphdr;
@@ -530,8 +844,8 @@ static void socks4a_connect_1_of_2(struct conn *conn, HANDLE handle,
     req.iphdr.Length = htons(sizeof(req));
     req.iphdr.TTL = 64;
     req.iphdr.Protocol = IPPROTO_TCP;
-    req.iphdr.SrcAddr = iphdr->DstAddr;
-    req.iphdr.DstAddr = iphdr->SrcAddr;
+    req.iphdr.SrcAddr = loopback_addr;
+    req.iphdr.DstAddr = loopback_addr;
 
     memset(&req.tcphdr, 0, sizeof(req.tcphdr));
     req.tcphdr.SrcPort = tcphdr->DstPort;
@@ -545,13 +859,14 @@ static void socks4a_connect_1_of_2(struct conn *conn, HANDLE handle,
 
     req.sockshdr.vn = 0x04;                 // SOCKS4a
     req.sockshdr.cd = 0x01;                 // Stream connection
-    req.sockshdr.dst_port = conn->port;
+    req.sockshdr.dst_port = conn->remote_port;
 
+    (void)WinDivertHelperFormatIPv4Address(ntohl(conn->local_addr),
+        local_addr_str, sizeof(local_addr_str));
     if (name != NULL)
     {
-        debug("Connect %u.%u.%u.%u:%u ---> %s:%u\n",
-            ADDR0(srcaddr), ADDR1(srcaddr), ADDR2(srcaddr), ADDR3(srcaddr),
-            ntohs(tcphdr->DstPort), name->name, ntohs(conn->port));
+        debug(GREEN, "CONNECT", "%s:%u ---> %s:%u", local_addr_str,
+            ntohs(conn->local_port), name->name, ntohs(conn->remote_port));
         
         req.sockshdr.dst_addr = ntohl(0x00000001);
 
@@ -570,56 +885,38 @@ static void socks4a_connect_1_of_2(struct conn *conn, HANDLE handle,
     }
     else
     {
-        debug("Connect %u.%u.%u.%u:%u ---> %u.%u.%u.%u:%u\n",
-            ADDR0(srcaddr), ADDR1(srcaddr), ADDR2(srcaddr), ADDR3(srcaddr),
-            ntohs(tcphdr->DstPort),
-            ADDR0(dstaddr), ADDR1(dstaddr), ADDR2(dstaddr), ADDR3(dstaddr),
-            ntohs(conn->port));
+        char remote_addr_str[INET4_ADDRSTRLEN+1];
+        (void)WinDivertHelperFormatIPv4Address(ntohl(conn->local_addr),
+            remote_addr_str, sizeof(remote_addr_str));
+        debug(GREEN, "CONNECT", "%s:%u ---> %s:%u",
+            local_addr_str, ntohs(conn->local_port), remote_addr_str,
+                ntohs(conn->remote_port));
 
-        req.sockshdr.dst_addr = iphdr->DstAddr;
+        req.sockshdr.dst_addr = conn->remote_addr;
 
         // SOCKS4 direct connection:
         for (size_t i = 0; i < SOCKS_USERID_SIZE - 1; i++)
             req.sockshdr.userid[i] = '4';
     }
     req.sockshdr.userid[SOCKS_USERID_SIZE-1] = '\0';
-
     send_packet(handle, &req, sizeof(req), addr);
+
+    // The original SYN-ACK is dropped.  A "replacement" SYN-ACK will be sent
+    // by the socks4a_connect_2_of_2() function.
 }
 
-static void socks4a_connect_2_of_2(struct conn *conn, HANDLE handle,
+static void socks4a_connect_2_of_2(struct connection *conn, HANDLE handle,
     PWINDIVERT_ADDRESS addr, PWINDIVERT_IPHDR iphdr, PWINDIVERT_TCPHDR tcphdr,
     struct socks4a_rep *sockshdr)
 {
+    addr->Network.IfIdx = conn->if_idx;
+    addr->Network.SubIfIdx = conn->sub_if_idx;
+    addr->Loopback = 0;
+    addr->Outbound = 0;
+
     if (sockshdr->vn != 0 || sockshdr->cd != 0x5A)
     {
-        // Something went wrong; close the connnection:
-        struct
-        {
-            WINDIVERT_IPHDR iphdr;
-            WINDIVERT_TCPHDR tcphdr;
-        } rst;
-
-        memset(&rst.iphdr, 0, sizeof(rst.iphdr));
-        rst.iphdr.Version = 4;
-        rst.iphdr.HdrLength = sizeof(rst.iphdr) / sizeof(uint32_t);
-        rst.iphdr.Id = htons(0xF003);
-        WINDIVERT_IPHDR_SET_DF(&rst.iphdr, 1);
-        rst.iphdr.Length = htons(sizeof(rst));
-        rst.iphdr.TTL = 64;
-        rst.iphdr.Protocol = IPPROTO_TCP;
-        rst.iphdr.SrcAddr = iphdr->DstAddr;
-        rst.iphdr.DstAddr = iphdr->SrcAddr;
-
-        memset(&rst.tcphdr, 0, sizeof(rst.tcphdr));
-        rst.tcphdr.SrcPort = conn->port;
-        rst.tcphdr.DstPort = tcphdr->DstPort;
-        rst.tcphdr.SeqNum = htonl(0);
-        rst.tcphdr.AckNum = tcphdr->AckNum;
-        rst.tcphdr.HdrLength = sizeof(rst.tcphdr) / sizeof(uint32_t);
-        rst.tcphdr.Rst = 1;
-
-        send_packet(handle, &rst, sizeof(rst), addr);
+        reset(handle, iphdr, tcphdr, sizeof(struct socks4a_rep), addr);
         return;
     }
 
@@ -638,12 +935,12 @@ static void socks4a_connect_2_of_2(struct conn *conn, HANDLE handle,
     synack.iphdr.Length = htons(sizeof(synack));
     synack.iphdr.TTL = 64;
     synack.iphdr.Protocol = IPPROTO_TCP;
-    synack.iphdr.SrcAddr = iphdr->DstAddr;
-    synack.iphdr.DstAddr = iphdr->SrcAddr;
+    synack.iphdr.SrcAddr = conn->remote_addr;
+    synack.iphdr.DstAddr = conn->local_addr;
 
     memset(&synack.tcphdr, 0, sizeof(synack.tcphdr));
-    synack.tcphdr.SrcPort = conn->port;
-    synack.tcphdr.DstPort = tcphdr->DstPort;
+    synack.tcphdr.SrcPort = conn->remote_port;
+    synack.tcphdr.DstPort = conn->local_port;
     synack.tcphdr.SeqNum = htonl(ntohl(tcphdr->SeqNum) +
         sizeof(struct socks4a_rep) - 1);
     synack.tcphdr.AckNum = tcphdr->AckNum;
@@ -666,6 +963,8 @@ static void handle_dns(HANDLE handle, PWINDIVERT_ADDRESS addr,
 {
     // We only handle standard DNS queries.
 
+    if (!addr->Outbound)
+        return;
     if (data_len <= sizeof(struct dnshdr))
         return;
     if (data_len > 512)                     // Max DNS packet size.
@@ -712,9 +1011,11 @@ static void handle_dns(HANDLE handle, PWINDIVERT_ADDRESS addr,
         return;
     }
 
-    debug("Intercept DNS %s ---> %u.%u.%u.%u\n",
-        (name[0] == '.'? name+1: name), ADDR0(fake_addr), ADDR1(fake_addr),
-        ADDR2(fake_addr), ADDR3(fake_addr));
+    char fake_addr_str[INET4_ADDRSTRLEN+1];
+    (void)WinDivertHelperFormatIPv4Address(fake_addr, fake_addr_str,
+        sizeof(fake_addr_str));
+    debug(GREEN, "INTERCEPT", "Domain %s mapped to address %s",
+        (name[0] == '.'? name+1: name), fake_addr_str);
 
     // Construct a query response:
     size_t len = sizeof(struct dnshdr) + data_len + sizeof(struct dnsa);
@@ -763,58 +1064,6 @@ static void handle_dns(HANDLE handle, PWINDIVERT_ADDRESS addr,
     send_packet(handle, &buf, len, addr);
 }
 
-// Queue a cleanup operation.
-static void queue_cleanup(uint32_t addr, uint16_t port)
-{
-    struct cleanup *entry = (struct cleanup *)malloc(
-        sizeof(struct cleanup));
-    if (entry == NULL)
-    {
-        warning("failed to allocate %u bytes for cleanup entry",
-            sizeof(struct cleanup));
-        exit(EXIT_FAILURE);
-    }
-    entry->addr = addr;
-    entry->port = port;
-
-    while (true)
-    {
-        entry->next = queue;
-        if (InterlockedCompareExchangePointer((PVOID *)&queue, (PVOID)entry,
-                (PVOID)entry->next) == entry->next)
-            break;
-    }
-}
-
-// Cleanup stale connections.
-extern void redirect_cleanup(size_t count)
-{
-    if (count % 2 != 0)
-        return;
-
-    struct cleanup *q0 = (struct cleanup *)InterlockedExchangePointer(
-        (PVOID)&queue, NULL);
-    struct cleanup *q = queue_0;
-    queue_0 = q0;
-
-    while (q != NULL)
-    {
-        struct conn *conn = conns + q->port;
-        if (conn->state != STATE_ESTABLISHED &&
-            conn->state != STATE_NOT_CONNECTED)
-        {
-            debug("Cleanup %s connection ",
-                (conn->state == STATE_FIN_SEEN? "closed": "stalled"));
-            debug_addr(q->addr, conn->port);
-            conn->state = STATE_NOT_CONNECTED;
-            conn->port = 0;
-        }
-        q0 = q;
-        q = q->next;
-        free(q0);
-    }
-}
-
 // Read traffic filter.
 extern bool filter_read(const char *filename, char *filter, size_t len)
 {
@@ -842,8 +1091,8 @@ extern bool filter_read(const char *filename, char *filter, size_t len)
 
                 // Check the filter for errors:
                 const char *err_str;
-                if (!WinDivertHelperCheckFilter(filter,
-                        WINDIVERT_LAYER_NETWORK, &err_str, NULL))
+                if (!WinDivertHelperCompileFilter(filter,
+                        WINDIVERT_LAYER_NETWORK, NULL, 0, &err_str, NULL))
                 {
                     warning("failed to verify \"%s\"; filter error \"%s\"",
                         filename, err_str);
@@ -882,18 +1131,104 @@ length_error:
     return false;
 }
 
-// Debug address:
-static void debug_addr(uint32_t addr, uint16_t port)
+// Whitelist TOR connections.
+static DWORD whitelist_worker(LPVOID arg)
 {
-    struct name *name = domain_lookup_name(addr);
-    if (name != NULL)
+    DWORD tor_pid = (DWORD)arg;
+
+    HANDLE handle = WinDivertOpen(
+        "tcp and (event == CONNECT or event == CLOSE) and "
+        "localAddr != :: and remoteAddr != ::",
+        WINDIVERT_LAYER_SOCKET, 12234,
+        WINDIVERT_FLAG_RECV_ONLY | WINDIVERT_FLAG_SNIFF);
+    HANDLE inject = WinDivertOpen("false", WINDIVERT_LAYER_NETWORK,
+        PRIORITY+1, WINDIVERT_FLAG_SEND_ONLY);
+
+    if (handle == INVALID_HANDLE_VALUE || inject == INVALID_HANDLE_VALUE)
     {
-        debug("%s:%u\n", name->name, ntohs(port));
-        domain_deref(name);
+        warning("failed to open WinDivert filter");
+        exit(EXIT_FAILURE);
     }
-    else
-        debug("%u.%u.%u.%u:%u\n",
-            ADDR0(addr), ADDR1(addr), ADDR2(addr),
-            ADDR3(addr), ntohs(port));
+
+    while (true)
+    {
+        WINDIVERT_ADDRESS addr;
+        if (!WinDivertRecv(handle, NULL, 0, NULL, &addr))
+            continue;
+
+        uint16_t local_port = htons(addr.Socket.LocalPort);
+        switch (addr.Event)
+        {
+            case WINDIVERT_EVENT_SOCKET_CLOSE:
+            {
+                // Close an existing connection:
+                struct connection *conn = conns + local_port;
+                lock(conns_lock);
+                if (conn->state == STATE_NOT_CONNECTED ||
+                    conn->state == STATE_FIN_WAIT)
+                {
+                    unlock(conns_lock);
+                    continue;
+                }
+                conn->state = STATE_FIN_WAIT;
+                struct syn *syn = conn->syn;
+                conn->syn = NULL;
+                unlock(conns_lock);
+                free(syn);
+
+                struct name *name =
+                    domain_lookup_name(addr.Socket.RemoteAddr[0]);
+                char local_addr_str[INET4_ADDRSTRLEN];
+                WinDivertHelperFormatIPv4Address(addr.Socket.LocalAddr[0],
+                    local_addr_str, sizeof(local_addr_str));
+                if (name == NULL)
+                {
+                    char remote_addr_str[INET4_ADDRSTRLEN];
+                    WinDivertHelperFormatIPv4Address(addr.Socket.RemoteAddr[0],
+                        remote_addr_str, sizeof(remote_addr_str));
+                    debug(YELLOW, "DISCONNECT", "%s:%u -/-> %s:%u",
+                        local_addr_str, addr.Socket.LocalPort,
+                        remote_addr_str, addr.Socket.RemotePort);
+                }
+                else
+                {
+                    debug(YELLOW, "DISCONNECT", "%s:%u -/-> %s:%u",
+                        local_addr_str, addr.Socket.LocalPort,
+                        name->name, addr.Socket.RemotePort);
+                    domain_deref(name);
+                }
+                break;
+            }
+
+            case WINDIVERT_EVENT_SOCKET_CONNECT:
+                if (addr.Socket.ProcessId == tor_pid)
+                {
+                    // This is a Tor connect, so whitelist it:
+                    pend_connect(inject, local_port, STATE_WHITELISTED);
+                }
+                else
+                {
+                    // This connection must be redirected to Tor:
+                    pend_connect(inject, local_port, STATE_SYN_WAIT);
+                }
+                break;
+
+            default:
+                break;
+        }
+    }
+}
+
+// Initialize whitelisting.
+void redirect_whitelist_init(DWORD tor_pid)
+{
+    HANDLE worker = CreateThread(NULL, MAX_PACKET*3,
+        (LPTHREAD_START_ROUTINE)whitelist_worker, (LPVOID)tor_pid, 0, NULL);
+    if (worker == NULL)
+    {
+        warning("failed to create whitelist worker thread");
+        exit(EXIT_FAILURE);
+    }
+    CloseHandle(worker);
 }
 

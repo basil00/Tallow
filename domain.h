@@ -1,6 +1,6 @@
 /*
  * domain.h
- * Copyright (C) 2015, basil
+ * Copyright (C) 2019, basil
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,8 +21,10 @@
 
 #include <stdint.h>
 
-#define ADDR_BASE               0x2C000000      // 44.0.0.0/24 (AMPRNet)
+#define ADDR_BASE               0x2C000000      // 44.0.0.0/8 (AMPRNet)
 #define ADDR_MAX                0x2CFFFFFF
+#define ADDR_BASE_STR           "44.0.0.0"
+#define ADDR_MAX_STR            "44.255.255.255"
 
 static inline bool is_fake_addr(uint32_t addr)
 {

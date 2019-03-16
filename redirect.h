@@ -1,6 +1,6 @@
 /*
  * redirect.h
- * Copyright (C) 2015, basil
+ * Copyright (C) 2019, basil
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,6 +19,7 @@
 #define __REDIRECT_H
 
 extern void redirect_init(void);
+extern void redirect_whitelist_init(DWORD tor_pid);
 extern void redirect_start(void);
 extern void redirect_stop(void);
 extern void redirect_cleanup(size_t count);
