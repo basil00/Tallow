@@ -20,8 +20,8 @@
 
 set -e
 
-WINDIVERT=WinDivert-2.0.0-rc
-TOR=tor-win32-0.3.5.7
+WINDIVERT=WinDivert-2.2.0-B
+TOR=tor-win32-0.4.1.6
 VERSION=`cat VERSION`
 
 echo "Checking for dependencies..."
@@ -69,13 +69,14 @@ for FILE in \
        "$WINDIVERT/x64/WinDivert64.sys" \
        "$WINDIVERT/x86/WinDivert32.sys" \
        "$WINDIVERT/x86/WinDivert.dll" \
-       "Tor/libeay32.dll" \
-       "Tor/libevent-2-0-5.dll" \
-       "Tor/libevent_core-2-0-5.dll" \
-       "Tor/libevent_extra-2-0-5.dll" \
+       "Tor/libcrypto-1_1.dll" \
+       "Tor/libssl-1_1.dll" \
+       "Tor/libwinpthread-1.dll" \
+       "Tor/libevent-2-1-6.dll" \
+       "Tor/libevent_core-2-1-6.dll" \
+       "Tor/libevent_extra-2-1-6.dll" \
        "Tor/libgcc_s_sjlj-1.dll" \
        "Tor/libssp-0.dll" \
-       "Tor/ssleay32.dll" \
        "Tor/zlib1.dll" \
        "Tor/tor.exe" \
        "Data/Tor/geoip" \
