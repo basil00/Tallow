@@ -772,7 +772,7 @@ static bool is_portable_install(void)
 {
     HKEY key;
 
-    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, REG_PATH, 0, KEY_READ, &key) !=
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, REG_UNINSTALL_PATH, 0, KEY_READ, &key) !=
         ERROR_SUCCESS)
     {
         status("detected portable install");
