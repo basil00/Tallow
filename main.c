@@ -678,7 +678,6 @@ void debug(int color, const char *event, const char *message, ...)
 ////////////////////////////////////////////////////////////////////////////////
 #define REG_UNINSTALL_PATH "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" PROGNAME
 static BOOL is_portable_install(void) {
-    BOOL portable = FALSE;
     HKEY key;
 
     if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, REG_PATH, 0, KEY_READ, & key) !=
