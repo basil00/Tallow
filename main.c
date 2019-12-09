@@ -277,9 +277,13 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 			// lazy, sure, but it's better imo this way for a real portable package 
 			if(is_portable_install())
 			{
-				if(MessageBox(hwnd, 
-				"The service driver is kept running even after closing the program (in a pending delete state) with the side effect of locking the driver file. If you plan to completely remove this portable install (including the sys file) the driver must first be stopped.\n\nStop the service driver?" , "Portable install detected", MB_YESNO | MB_ICONQUESTION) == IDYES)
-					stop_windivert_service();
+				if(MessageBox(hwnd,
+                              "The service driver is kept running even after closing the program (in a pending delete state)"
+                              "with the side effect of locking the driver file. If you plan to completely remove this portable"
+                              "install (including the sys file) the driver must first be stopped.\n\nStop the service driver?",
+                              "Portable install detected",
+                              MB_YESNO | MB_ICONQUESTION) == IDYES)
+                    stop_windivert_service();
 			}
 			
             DestroyWindow(hwnd);
@@ -678,35 +682,32 @@ void debug(int color, const char *event, const char *message, ...)
 static BOOL is_portable_install(void)
 {
 	BOOL portable = FALSE;
-    HKEY key;
-	
-    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, REG_PATH, 0, KEY_READ, &key)
-            != ERROR_SUCCESS)
+	HKEY key;
+
+	if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, REG_PATH, 0, KEY_READ, &key)
+        != ERROR_SUCCESS)
 	{
 		status("detected portable install");
-        portable = TRUE;
+		return TRUE;
 	}
-    RegCloseKey(key);
-
-	return portable;
+	RegCloseKey(key);
+	return FALSE;
 }
 // tried with normal SCM APIs, however for some reason, even if the lock was removed
 // the next time I start tallow it would error out when re-creating the driver, that
 // is why this hackish way of stop, no time for investigating further
 static BOOL stop_windivert_service(void)
 {
-    STARTUPINFO si;
-    PROCESS_INFORMATION pi;
-    memset(&si, 0, sizeof(si));
-    si.cb = sizeof(STARTUPINFO);
-    si.wShowWindow = SW_HIDE;
-
-    if (!CreateProcess(NULL,
-        "sc.exe stop WinDivert",
-        NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
-    {
-        warning("failed to start sc");
+	STARTUPINFO si;
+	PROCESS_INFORMATION pi;
+	memset(&si, 0, sizeof(si));
+	si.cb = sizeof(STARTUPINFO);
+	si.wShowWindow = SW_HIDE;
+	if (!CreateProcess(NULL, "sc.exe stop WinDivert",
+                       NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+	{
+		warning("failed to start sc");
 		return FALSE;
-    }
+	}
 	return TRUE;
 }
