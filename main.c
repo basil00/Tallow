@@ -60,12 +60,12 @@ static void save_option(const char *option, bool val0);
 static bool restore_option(const char *option);
 static bool is_portable_install(void);
 static bool refresh_windivert_service(void);
-static bool stop_windivert_service(void);
+static bool stop_local_windivert_service(void);
 static void tray_drawicon(HWND hWnd);
 static void tray_deleteicon(HWND hWnd);
 static void tray_loadpopupmenu(HWND hWnd);
 static void refresh_tray(void);
-
+static char* stristr(const char* cs, const char* ct);
 
 // Global instance
 HINSTANCE g_instance;
@@ -81,6 +81,7 @@ static HWND status_label = NULL;
 // Tor state:
 static bool state = false;
 static bool bootstraped = false;
+
 // Options:
 #define OPTION_FORCE_WEB_ONLY       "ForceWebOnly"
 #define OPTION_FORCE_SOCKS4a_ONLY   "ForceSOCKS4aOnly"
@@ -322,7 +323,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
                 if (state)
                     stop_tor();
                 if (is_portable_install())
-                    stop_windivert_service();
+                    stop_local_windivert_service();
                 tray_deleteicon(hwnd);
                 DestroyWindow(hwnd);
             }
@@ -339,7 +340,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
                 if (state)
                     stop_tor();
                 if (is_portable_install())
-                    stop_windivert_service();
+                    stop_local_windivert_service();
                 DestroyWindow(hwnd);                
             }
             break;     
@@ -787,12 +788,17 @@ static bool is_portable_install(void)
 // only called if portable install detected
 // this is mainly useful for portable installations when the user wants to
 // completely delete the extracted folder (sys file included), the running
-// driver keeps file locked, preventing delete, so try to stop
+// driver keeps file locked, preventing delete, checks for the driver path
+// same as exe path (meaning it was created/started by us) then send stop
 #define WINDIVERT_DRIVER_NAME "WinDivert"
-static bool stop_windivert_service(void)
+static bool stop_local_windivert_service(void)
 {
-    HANDLE manager = NULL, service = NULL;
+    HANDLE manager = NULL;
+    HANDLE service = NULL;
     SERVICE_STATUS servicestatus;
+    LPQUERY_SERVICE_CONFIG lpsc = NULL;
+    DWORD dwBytesNeeded, cbBufSize;
+    CHAR szPath[MAX_PATH];
     BOOL succeeded;
 
     succeeded = TRUE;
@@ -811,6 +817,52 @@ static bool stop_windivert_service(void)
         goto stop_cleanup;
     }
 
+    if( !QueryServiceConfig(service, NULL, 0, &dwBytesNeeded))
+    {
+        if(ERROR_INSUFFICIENT_BUFFER == GetLastError())
+        {
+            cbBufSize = dwBytesNeeded;
+            lpsc = (LPQUERY_SERVICE_CONFIG) malloc(cbBufSize);
+            if(lpsc == NULL)
+            {
+                succeeded = FALSE;
+                goto stop_cleanup;
+            }
+        }
+        else
+        {
+            succeeded = FALSE;
+            goto stop_cleanup; 
+        }
+    }
+
+    if( !QueryServiceConfig(service, lpsc, cbBufSize, &dwBytesNeeded)) 
+    {
+        succeeded = FALSE;
+        goto stop_cleanup;
+    }
+    
+    if(GetModuleFileNameA(NULL, szPath, MAX_PATH) == 0)
+    {
+        succeeded = FALSE;
+        goto stop_cleanup;
+    }
+    CHAR* lastbs = strrchr(szPath, '\\');
+    if(lastbs == NULL)
+    {
+        succeeded = FALSE;
+        goto stop_cleanup;
+    }
+    *lastbs = 0;
+    
+    if(stristr(lpsc->lpBinaryPathName, szPath) == NULL)
+    {
+        succeeded = FALSE;
+        goto stop_cleanup;
+    }
+
+    //at this point running service folder path == portable folder so stop
+    status("service running from portable folder, sending stop"); 
     if ((!ControlService(service, SERVICE_CONTROL_STOP, &servicestatus)) &&
         (GetLastError() != ERROR_SERVICE_NOT_ACTIVE))
     {
@@ -818,9 +870,11 @@ static bool stop_windivert_service(void)
         goto stop_cleanup;
     }
 
-    stop_cleanup:
-        if (service)
-            CloseServiceHandle(service);
+stop_cleanup:
+    if(lpsc)
+        free(lpsc);
+    if (service)
+        CloseServiceHandle(service);
     if (manager)
         CloseServiceHandle(manager);
 
@@ -939,4 +993,18 @@ void refresh_tray(void)
                 SendMessage(g_hToobarTray, WM_MOUSEMOVE, 0, MAKELONG(1, i));
         }
     }
+}
+
+// insensitive strstr implementation
+char* stristr(const char* cs, const char* ct)
+{
+    for (; *cs; ++cs)
+    {
+        size_t p = 0;
+
+        while (ct[p] && (tolower(cs[p]) == tolower(ct[p]))) ++p;
+
+        if (ct[p] == 0) return (char*)cs;
+    }
+    return NULL;
 }
