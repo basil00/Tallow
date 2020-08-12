@@ -66,10 +66,6 @@ as Windows update, Windows phone home, and some common ad servers, to help
 prevent Tor bandwidth wastage.  It is possible to edit and customize your
 hosts.deny file as you see fit.
 
-Note that Tallow does not intercept TCP ports 9001 and 9030 that are used by
-Tor.  As a side-effect, Tallow will not work on any other program that uses
-these ports.
-
 History
 =======
 
@@ -89,8 +85,8 @@ To build Tallow you need the MinGW cross-compiler for Linux.
 You also need to download and place the following external dependencies and
 place them in the contrib/ directory:
 
-* [WinDivert-1.4.2-A-MINGW.zip](http://reqrypt.org/windivert.html).
-* [tor-win32-0.3.3.7.zip](https://www.torproject.org/).
+* [WinDivert-2.2.0-B-MINGW.zip](http://reqrypt.org/windivert.html).
+* [tor-win32-0.4.1.6.zip](https://www.torproject.org/).
 
 Then simply run the build.sh script.
 
