@@ -40,7 +40,7 @@ Tallow uses the following configuration to connect to the Internet:
 Here (a.b.c.d) represents the local address, and (x.y.z.w) represents a remote
 server.
 
-Tallow uses [WinDivert](http://reqrypt.org/windivert.html) to intercept
+Tallow uses [WinDivert](https://reqrypt.org/windivert.html) to intercept
 all traffic to/from your PC.  Tallow handles two main traffic types: DNS
 traffic and TCP streams.
 
@@ -85,8 +85,8 @@ To build Tallow you need the MinGW cross-compiler for Linux.
 You also need to download and place the following external dependencies and
 place them in the contrib/ directory:
 
-* [WinDivert-2.2.0-B-MINGW.zip](http://reqrypt.org/windivert.html).
-* [tor-win32-0.4.1.6.zip](https://www.torproject.org/).
+* [WinDivert-2.2.0-B-MINGW.zip](https://reqrypt.org/download/WinDivert-2.2.0-B.zip).
+* [tor-win32-0.4.5.10.zip](https://www.torproject.org/dist/torbrowser/10.5.6/tor-win32-0.4.5.10.zip).
 
 Then simply run the build.sh script.
 
@@ -106,7 +106,7 @@ Warnings
 Currently Tallow makes no attempt to anonymize the content of traffic sent
 *through* the Tor network.  This information may be used to de-anonymize you.
 See [this
-link](https://trac.torproject.org/projects/tor/wiki/doc/TransparentProxyLeaks)
+link](https://gitlab.torproject.org/legacy/trac/-/wikis/doc/TransparentProxyLeaks)
 for more information.  Tallow *should not be relied on for strong anonymity*
 unless you know what you are doing.
 
