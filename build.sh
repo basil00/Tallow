@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# (C) 2019, all rights reserved,
+# (C) 2021, all rights reserved,
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@
 set -e
 
 WINDIVERT=WinDivert-2.2.0-B
-TOR=tor-win32-0.4.1.6
+TOR=tor-win32-0.4.5.10
 VERSION=`cat VERSION`
 
 echo "Checking for dependencies..."
@@ -72,9 +72,9 @@ for FILE in \
        "Tor/libcrypto-1_1.dll" \
        "Tor/libssl-1_1.dll" \
        "Tor/libwinpthread-1.dll" \
-       "Tor/libevent-2-1-6.dll" \
-       "Tor/libevent_core-2-1-6.dll" \
-       "Tor/libevent_extra-2-1-6.dll" \
+       "Tor/libevent-2-1-7.dll" \
+       "Tor/libevent_core-2-1-7.dll" \
+       "Tor/libevent_extra-2-1-7.dll" \
        "Tor/libgcc_s_sjlj-1.dll" \
        "Tor/libssp-0.dll" \
        "Tor/zlib1.dll" \

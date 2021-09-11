@@ -5,12 +5,11 @@
 # Notes:
 # - This file uses the WinDivert filter language, see:
 #   (https://reqrypt.org/windivert-doc.html) for more information.
-# - This is filter in addition to "web-only" mode; the two filters operate
-#   independently.
-# - ipv6 and non-tcp (except port 53 UDP) will be dropped regardless of what
-#   this file specifies.  However, it is more efficient to filter such
-#   traffic here.
-# - Traffic is dropped if and only if the filter evaluates to "true".
+# - This is an additional filter on top of "web-only" mode (the two filters
+#   operate independently).
+# - ipv6 and non-tcp (except port 53 UDP) traffic will be dropped regardless
+#   of the contents of this file.
+# - Traffic will be dropped if and only if this filter evaluates to "true".
 
 (ipv6? true: false)                 # IPv6 always dropped.
     or

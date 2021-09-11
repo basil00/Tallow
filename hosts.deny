@@ -1,6 +1,8 @@
-# This file contains a list of domains that are blocked via Tor.
-# NOTE: These domains are *NOT* blocked when Tor diversion is disabled!
-# The primary motivation for this list is to minimize Tor bandwidth.
+# This file contains a list of domains that will be blocked when Tor
+# diversion is enabled.
+#
+# Warning: The primary motivation for this list is to minimize Tor bandwidth,
+#          and NOT security nor privacy.
 
 # Windows update:
 download.windowsupdate.com

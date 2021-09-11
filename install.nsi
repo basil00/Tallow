@@ -1,5 +1,5 @@
 ; install.nsi
-; (C) 2018, all rights reserved,
+; (C) 2021, all rights reserved,
 ; 
 ; This program is free software: you can redistribute it and/or modify
 ; it under the terms of the GNU General Public License as published by
@@ -52,9 +52,9 @@ Section ""
     File "libcrypto-1_1.dll"
     File "libssl-1_1.dll"
     File "libwinpthread-1.dll"
-    File "libevent-2-1-6.dll"
-    File "libevent_core-2-1-6.dll"
-    File "libevent_extra-2-1-6.dll"
+    File "libevent-2-1-7.dll"
+    File "libevent_core-2-1-7.dll"
+    File "libevent_extra-2-1-7.dll"
     File "libgcc_s_sjlj-1.dll"
     File "libssp-0.dll"
     File "zlib1.dll"
