@@ -40,15 +40,35 @@
     (50 + BUTTON_SIZE_Y + 2 * BUTTON_OFFSET_Y)
 #define TOR_ON_MESSAGE              "Tor is ON"
 #define TOR_OFF_MESSAGE             "Tor is OFF"
+
 #define ID_TOR_BUTTON               3100
 #define ID_DIRECT_CHECK             3101
 #define ID_WEB_CHECK                3102
+#define ID_CLOSE_TRAY               3103
+
+#define WM_TRAYMESSAGE              (WM_USER + 1)
+#define TRAY_ICONUID                3200
+#define IDM_TRAY_SHOW               3201
+#define IDM_TRAY_CONNECT            3202
+#define IDM_TRAY_DISCONNECT         3203
+#define IDM_TRAY_EXIT               3204
 
 // Prototypes:
 static DWORD WINAPI tor_thread(LPVOID arg);
 static DWORD WINAPI cleanup_thread(DWORD arg);
 static void save_option(const char *option, bool val0);
 static bool restore_option(const char *option);
+static bool is_portable_install(void);
+static bool refresh_windivert_service(void);
+static bool stop_local_windivert_service(void);
+static void tray_drawicon(HWND hWnd);
+static void tray_deleteicon(HWND hWnd);
+static void tray_loadpopupmenu(HWND hWnd);
+static void refresh_tray(void);
+static char* stristr(const char* cs, const char* ct);
+
+// Global instance
+HINSTANCE g_instance;
 
 // Debugging.
 static HANDLE debug_lock = NULL;
@@ -60,12 +80,15 @@ static HWND status_label = NULL;
 
 // Tor state:
 static bool state = false;
+static bool bootstraped = false;
 
 // Options:
 #define OPTION_FORCE_WEB_ONLY       "ForceWebOnly"
 #define OPTION_FORCE_SOCKS4a_ONLY   "ForceSOCKS4aOnly"
+#define OPTION_CLOSE_TRAY           "CloseToTray"
 bool option_force_web_only = true;
 bool option_force_socks4a  = true;
+bool option_close_tray     = true;
 
 // Start/stop Tor:
 static void start_tor(void)
@@ -108,6 +131,11 @@ static LRESULT CALLBACK config_proc(HWND hwnd, UINT msg, WPARAM wparam,
                         option_force_web_only = (state == BST_CHECKED);
                         save_option(OPTION_FORCE_WEB_ONLY,
                             option_force_web_only);
+                        break;
+                    case ID_CLOSE_TRAY:
+                        option_close_tray = (state == BST_CHECKED);
+                        save_option(OPTION_CLOSE_TRAY,
+                            option_close_tray);
                         break;
                     default:
                         break;
@@ -169,7 +197,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
                 hwnd, (HMENU)ID_TOR_BUTTON, instance, NULL);
             if (button == NULL)
                 goto gui_init_failed;
-            HICON image = LoadImage(GetModuleHandle(NULL), "TOR_ICON",
+            HICON image = LoadImage(g_instance, "TOR_ICON",
                 IMAGE_ICON, 0, 0, LR_DEFAULTCOLOR);
             if (image == NULL)
                 goto gui_init_failed;
@@ -250,12 +278,24 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
             if (option_force_socks4a)
                 SendMessage(direct_check, BM_SETCHECK, (WPARAM)BST_CHECKED, 0);
 
-            break;
+            HWND close_tray = CreateWindow(
+                "BUTTON", "Close to tray",
+                BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE,
+                15, 60, config_size_x - 30, 15,
+                config_box, (HMENU)ID_CLOSE_TRAY, instance, NULL);
+            if (close_tray == NULL)
+                goto gui_init_failed;
+            SendMessage(close_tray, WM_SETFONT, (WPARAM)font, 0);
+            if (option_close_tray)
+                SendMessage(close_tray, BM_SETCHECK, (WPARAM)BST_CHECKED, 0);
+
+           break;
         }
         case WM_COMMAND:
         {
             int event = HIWORD(wparam);
-            if (event == BN_CLICKED && LOWORD(wparam) == ID_TOR_BUTTON)
+            int id    = LOWORD(wparam);
+            if (event == BN_CLICKED && id == ID_TOR_BUTTON)
             {
                 LRESULT state = SendMessage((HWND)lparam, BM_GETCHECK, 0, 0);
                 if (state == BST_CHECKED)
@@ -263,11 +303,60 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
                 else
                     stop_tor();
             }
+            if (event == BN_CLICKED && id == IDM_TRAY_SHOW)
+            {
+                ShowWindow(hwnd, SW_SHOW);
+                tray_deleteicon(hwnd);
+            }
+            if (event == BN_CLICKED && id == IDM_TRAY_CONNECT)
+            {
+                SendDlgItemMessage(hwnd, ID_TOR_BUTTON, BM_SETCHECK, (WPARAM)BST_CHECKED, 0);
+                start_tor();
+            }         
+            if (event == BN_CLICKED && id == IDM_TRAY_DISCONNECT)
+            {
+                SendDlgItemMessage(hwnd, ID_TOR_BUTTON, BM_SETCHECK, (WPARAM)BST_UNCHECKED, 0);
+                stop_tor();
+            }   
+            if (event == BN_CLICKED && id == IDM_TRAY_EXIT)
+            {
+                if (state)
+                    stop_tor();
+                if (is_portable_install())
+                    stop_local_windivert_service();
+                tray_deleteicon(hwnd);
+                DestroyWindow(hwnd);
+            }
             break;
         }
         case WM_CLOSE:
-            DestroyWindow(hwnd);
-            break;
+            if (option_close_tray)
+            {
+                tray_drawicon(hwnd);
+                ShowWindow(hwnd, SW_HIDE);              
+            }
+            else
+            {
+                if (state)
+                    stop_tor();
+                if (is_portable_install())
+                    stop_local_windivert_service();
+                DestroyWindow(hwnd);                
+            }
+            break;     
+        case WM_TRAYMESSAGE:
+                switch(lparam) {
+                case WM_LBUTTONDBLCLK:
+                    ShowWindow(hwnd, SW_SHOW);
+                    tray_deleteicon(hwnd);
+                    break;
+                case WM_RBUTTONUP:
+                    tray_loadpopupmenu(hwnd);
+                    break;
+                default:
+                    return DefWindowProc(hwnd, msg, wparam, lparam);
+                }
+                break;
         case WM_DESTROY:
             PostQuitMessage(0);
             break;
@@ -285,6 +374,21 @@ gui_init_failed:
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
     LPSTR cmd_line, int cmd_show)
 {
+    g_instance = instance;
+
+    HANDLE tallow_mutex = OpenMutexA(MUTEX_ALL_ACCESS, FALSE, "TallowMutex");
+    if(tallow_mutex)
+    {
+        warning("Tallow is already running! (check tray?)");
+        return EXIT_FAILURE;
+    }
+    tallow_mutex = CreateMutexA(NULL, FALSE, "TallowMutex");
+    if (tallow_mutex == NULL)
+    {
+        warning("failed to create Tallow mutex");
+        return EXIT_FAILURE;
+    }
+
     // Attach to the parent console if it exists.
     if (AttachConsole(ATTACH_PARENT_PROCESS))
     {
@@ -305,6 +409,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
 
     // (0) Init stuff:
     debug_lock = create_lock();
+    refresh_windivert_service();
     srand(random());
     debug(MAGENTA, "INIT", "Initializing DNS handler...");
     domain_init();
@@ -312,6 +417,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
     redirect_init();
     option_force_socks4a  = restore_option(OPTION_FORCE_SOCKS4a_ONLY);
     option_force_web_only = restore_option(OPTION_FORCE_WEB_ONLY);
+    option_close_tray     = restore_option(OPTION_CLOSE_TRAY);
 
     // (1) Register the window class:
     debug(MAGENTA, "INIT", "Initializing GUI...");
@@ -319,7 +425,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
     class.cbSize = sizeof(WNDCLASSEX);
     class.lpfnWndProc = window_proc;
     class.hInstance = instance;
-    class.hIcon = LoadImage(GetModuleHandle(NULL), "TALLOW_ICON_SMALL",
+    class.hIcon = LoadImage(instance, "TALLOW_ICON_SMALL",
         IMAGE_ICON, 0, 0, LR_DEFAULTCOLOR);
     class.hCursor = LoadCursor(NULL, IDC_ARROW);
     class.hbrBackground = (HBRUSH)(COLOR_WINDOW);
@@ -333,7 +439,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
 
     // (2) Create the window:
     window = CreateWindow(PROGNAME "_WINDOW", PROGNAME " " STR(VERSION),
-        WS_OVERLAPPEDWINDOW & (~WS_THICKFRAME),
+        WS_OVERLAPPEDWINDOW & (~WS_THICKFRAME) & (~WS_MAXIMIZEBOX),
         CW_USEDEFAULT, CW_USEDEFAULT, WINDOW_SIZE_X, WINDOW_SIZE_Y,
         NULL, NULL, instance, NULL);
     if (window == NULL)
@@ -375,6 +481,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance,
         TranslateMessage(&message);
         DispatchMessage(&message);
     }
+
+    ReleaseMutex(tallow_mutex);
+    CloseHandle(tallow_mutex);
+
     return message.wParam;
 }
 
@@ -473,6 +583,7 @@ static DWORD WINAPI tor_thread(LPVOID arg)
         // Crude-but-effective:
         if (strstr(msg, "Bootstrapped 100%") != NULL)
         {
+            bootstraped = true;
             EnableWindow(button, TRUE);
             status("Bootstrapped 100%%: Press the \"Tor\" button to begin");
             continue;
@@ -657,3 +768,243 @@ void debug(int color, const char *event, const char *message, ...)
     va_end(args);
 }
 
+#define REG_UNINSTALL_PATH "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" PROGNAME
+static bool is_portable_install(void)
+{
+    HKEY key;
+
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, REG_UNINSTALL_PATH, 0, KEY_READ, &key) !=
+        ERROR_SUCCESS)
+    {
+        status("detected portable install");
+        return true;
+    }
+
+    RegCloseKey(key);
+
+    return false;
+}
+
+// only called if portable install detected
+// this is mainly useful for portable installations when the user wants to
+// completely delete the extracted folder (sys file included), the running
+// driver keeps file locked, preventing delete, checks for the driver path
+// same as exe path (meaning it was created/started by us) then send stop
+#define WINDIVERT_DRIVER_NAME "WinDivert"
+static bool stop_local_windivert_service(void)
+{
+    HANDLE manager = NULL;
+    HANDLE service = NULL;
+    SERVICE_STATUS servicestatus;
+    LPQUERY_SERVICE_CONFIG lpsc = NULL;
+    DWORD dwBytesNeeded, cbBufSize;
+    CHAR szPath[MAX_PATH];
+    BOOL succeeded;
+
+    succeeded = TRUE;
+
+    manager = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS);
+    if (manager == NULL)
+    {
+        succeeded = FALSE;
+        goto stop_cleanup;
+    }
+
+    service = OpenServiceA(manager, WINDIVERT_DRIVER_NAME, SERVICE_ALL_ACCESS);
+    if (service == NULL)
+    {
+        succeeded = FALSE;
+        goto stop_cleanup;
+    }
+
+    if( !QueryServiceConfig(service, NULL, 0, &dwBytesNeeded))
+    {
+        if(ERROR_INSUFFICIENT_BUFFER == GetLastError())
+        {
+            cbBufSize = dwBytesNeeded;
+            lpsc = (LPQUERY_SERVICE_CONFIG) malloc(cbBufSize);
+            if(lpsc == NULL)
+            {
+                succeeded = FALSE;
+                goto stop_cleanup;
+            }
+        }
+        else
+        {
+            succeeded = FALSE;
+            goto stop_cleanup; 
+        }
+    }
+
+    if( !QueryServiceConfig(service, lpsc, cbBufSize, &dwBytesNeeded)) 
+    {
+        succeeded = FALSE;
+        goto stop_cleanup;
+    }
+    
+    if(GetModuleFileNameA(NULL, szPath, MAX_PATH) == 0)
+    {
+        succeeded = FALSE;
+        goto stop_cleanup;
+    }
+    CHAR* lastbs = strrchr(szPath, '\\');
+    if(lastbs == NULL)
+    {
+        succeeded = FALSE;
+        goto stop_cleanup;
+    }
+    *lastbs = 0;
+    
+    if(stristr(lpsc->lpBinaryPathName, szPath) == NULL)
+    {
+        succeeded = FALSE;
+        goto stop_cleanup;
+    }
+
+    //at this point running service folder path == portable folder so stop
+    status("service running from portable folder, sending stop"); 
+    if ((!ControlService(service, SERVICE_CONTROL_STOP, &servicestatus)) &&
+        (GetLastError() != ERROR_SERVICE_NOT_ACTIVE))
+    {
+        succeeded = FALSE;
+        goto stop_cleanup;
+    }
+
+stop_cleanup:
+    if(lpsc)
+        free(lpsc);
+    if (service)
+        CloseServiceHandle(service);
+    if (manager)
+        CloseServiceHandle(manager);
+
+    return (bool) succeeded;
+}
+
+// this is a helper function to trigger update of the SCM driver database
+// looks like a simple QueryServiceStatusEx is all that's needed; without
+// it, if the service was on a pending delete and stopped in the previous
+// run it will error out on a new start because of cached values
+static bool refresh_windivert_service(void)
+{
+    HANDLE manager = NULL, service = NULL;
+    SERVICE_STATUS_PROCESS servicestatus;
+    DWORD dwBytesNeeded;
+    BOOL succeeded;
+
+    succeeded = TRUE;
+
+    manager = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS);
+    if (manager == NULL)
+    {
+        succeeded = FALSE;
+        goto stop_cleanup;
+    }
+
+    service = OpenServiceA(manager, WINDIVERT_DRIVER_NAME, SERVICE_ALL_ACCESS);
+    if (service == NULL)
+    {
+        succeeded = FALSE;
+        goto stop_cleanup;
+    }
+
+    if (!QueryServiceStatusEx(
+            service,
+            SC_STATUS_PROCESS_INFO,
+            (LPBYTE) &servicestatus,
+            sizeof(SERVICE_STATUS_PROCESS), &dwBytesNeeded))
+    {
+        succeeded = FALSE;
+        goto stop_cleanup;
+    }
+
+    stop_cleanup:
+        if (service)
+            CloseServiceHandle(service);
+    if (manager)
+        CloseServiceHandle(manager);
+
+    return (bool) succeeded;
+}
+
+// tray stuff
+void tray_drawicon(HWND hWnd)
+{
+    NOTIFYICONDATA nid;
+    nid.cbSize = sizeof(NOTIFYICONDATA);
+    nid.hWnd = hWnd;
+    nid.uID = TRAY_ICONUID;
+    nid.uVersion = NOTIFYICON_VERSION;
+    nid.uCallbackMessage = WM_TRAYMESSAGE;
+    nid.hIcon = LoadIcon(g_instance, "TALLOW_ICON_SMALL");
+    strcpy(nid.szTip, PROGNAME);
+    nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    Shell_NotifyIcon(NIM_ADD, &nid);
+}
+
+void tray_deleteicon(HWND hWnd)
+{
+    NOTIFYICONDATA nid;
+    nid.cbSize = sizeof(NOTIFYICONDATA);
+    nid.hWnd = hWnd;
+    nid.uID = TRAY_ICONUID;
+    Shell_NotifyIcon(NIM_DELETE, &nid);
+    refresh_tray();
+}
+
+void tray_loadpopupmenu(HWND hWnd)
+{
+    POINT cursor;
+    HMENU hMenu;
+    GetCursorPos(&cursor);
+    hMenu = (HMENU) GetSubMenu(LoadMenu(g_instance, "IDR_TRAYMENU"), 0);
+    EnableMenuItem(hMenu, IDM_TRAY_CONNECT, bootstraped ? (state ? MF_GRAYED : MF_ENABLED) : MF_GRAYED);
+    EnableMenuItem(hMenu, IDM_TRAY_DISCONNECT, bootstraped ? (state ? MF_ENABLED : MF_GRAYED) : MF_GRAYED);
+    TrackPopupMenu(hMenu, TPM_LEFTALIGN, cursor.x, cursor.y, 0, hWnd, NULL);
+}
+
+// ghost icon fix
+HWND g_hToobarTray = 0;
+
+BOOL CALLBACK EnumChildProc(HWND hwnd, LPARAM lParam)
+{
+    char szClass[MAX_PATH] = { 0 };
+    GetClassName(hwnd, szClass, sizeof(szClass));
+    if (strcmp(szClass, "ToolbarWindow32") == 0)
+    {
+        g_hToobarTray = hwnd;
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+void refresh_tray(void)
+{
+    HWND hTray = FindWindow("Shell_TrayWnd", 0);
+    if (hTray)
+    {
+        EnumChildWindows(hTray, EnumChildProc, 0);
+        if (g_hToobarTray)
+        {
+            RECT rc;
+            GetClientRect(g_hToobarTray, &rc);
+            for (int i = 1; i < rc.right; i++)
+                SendMessage(g_hToobarTray, WM_MOUSEMOVE, 0, MAKELONG(1, i));
+        }
+    }
+}
+
+// insensitive strstr implementation
+char* stristr(const char* cs, const char* ct)
+{
+    for (; *cs; ++cs)
+    {
+        size_t p = 0;
+
+        while (ct[p] && (tolower(cs[p]) == tolower(ct[p]))) ++p;
+
+        if (ct[p] == 0) return (char*)cs;
+    }
+    return NULL;
+}
